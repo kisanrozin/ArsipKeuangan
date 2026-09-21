@@ -1,0 +1,280 @@
+// ============================================================
+// masterData.js – Data master Sistem Pengarsipan Keuangan PU
+// ============================================================
+
+export const PROSES_BISNIS = [
+  {
+    id: 1,
+    tahap: "1",
+    nama: "Penerimaan Dokumen Keuangan",
+    pelaku: "Staf Administrasi",
+    deskripsi:
+      "Dokumen keuangan diterima dari berbagai unit kerja seperti PPTK, Bendahara Pengeluaran, dan Tim Pelaksana Kegiatan.",
+    input: "Dokumen fisik / digital dari unit kerja",
+    output: "Dokumen tercatat di buku agenda",
+    durasi: "1 hari kerja",
+    masalah: [
+      "Dokumen sering tidak lengkap saat diterima",
+      "Tidak ada sistem tracking real-time",
+    ],
+    status: "berjalan",
+    icon: "📥",
+  },
+  {
+    id: 2,
+    tahap: "2",
+    nama: "Verifikasi Kelengkapan Dokumen",
+    pelaku: "Kepala Sub Bagian Keuangan",
+    deskripsi:
+      "Pemeriksaan kelengkapan dan keabsahan dokumen sesuai dengan SOP yang berlaku dan peraturan perundang-undangan.",
+    input: "Dokumen dari proses penerimaan",
+    output: "Dokumen terverifikasi / dikembalikan",
+    durasi: "1–3 hari kerja",
+    masalah: [
+      "Proses manual memakan waktu",
+      "Risiko human error dalam pengecekan",
+    ],
+    status: "berjalan",
+    icon: "🔍",
+  },
+  {
+    id: 3,
+    tahap: "3",
+    nama: "Klasifikasi & Penomoran",
+    pelaku: "Staf Kearsipan",
+    deskripsi:
+      "Dokumen diklasifikasikan berdasarkan jenis, tahun anggaran, dan kode rekening, kemudian diberi nomor urut arsip.",
+    input: "Dokumen terverifikasi",
+    output: "Dokumen terklasifikasi dengan nomor arsip",
+    durasi: "1 hari kerja",
+    masalah: [
+      "Penomoran manual tidak konsisten",
+      "Belum ada standar kode klasifikasi yang baku",
+    ],
+    status: "berjalan",
+    icon: "🗂️",
+  },
+  {
+    id: 4,
+    tahap: "4",
+    nama: "Penyimpanan Fisik & Digital",
+    pelaku: "Staf Kearsipan",
+    deskripsi:
+      "Dokumen disimpan dalam ordner/box file di ruang arsip dan di-scan untuk penyimpanan digital di komputer lokal.",
+    input: "Dokumen terklasifikasi",
+    output: "Dokumen tersimpan fisik & digital",
+    durasi: "1 hari kerja",
+    masalah: [
+      "Penyimpanan digital tidak terpusat",
+      "Ruang arsip fisik sudah penuh",
+      "File digital tidak terproteksi",
+    ],
+    status: "berjalan",
+    icon: "💾",
+  },
+  {
+    id: 5,
+    tahap: "5",
+    nama: "Peminjaman & Penelusuran",
+    pelaku: "Semua Pegawai",
+    deskripsi:
+      "Proses pencarian dan peminjaman arsip oleh pegawai yang membutuhkan, menggunakan buku peminjaman manual.",
+    input: "Permintaan arsip",
+    output: "Arsip dipinjamkan / informasi ditemukan",
+    durasi: "30 menit – 2 hari",
+    masalah: [
+      "Pencarian dokumen lambat dan sulit",
+      "Dokumen sering tidak dikembalikan tepat waktu",
+      "Tidak ada notifikasi jatuh tempo",
+    ],
+    status: "berjalan",
+    icon: "🔎",
+  },
+  {
+    id: 6,
+    tahap: "6",
+    nama: "Pemusnahan & Retensi",
+    pelaku: "Kepala Dinas / Panitia",
+    deskripsi:
+      "Dokumen yang sudah melewati masa retensi diusulkan untuk dimusnahkan sesuai jadwal retensi arsip (JRA).",
+    input: "Daftar arsip yang habis masa retensi",
+    output: "Berita acara pemusnahan",
+    durasi: "1–2 bulan",
+    masalah: [
+      "Jadwal retensi belum terdokumentasi dengan baik",
+      "Proses persetujuan pemusnahan panjang",
+    ],
+    status: "berjalan",
+    icon: "🗑️",
+  },
+];
+
+export const KEBUTUHAN_FUNGSIONAL = [
+  {
+    id: "KF-001",
+    kategori: "Manajemen Dokumen",
+    kebutuhan: "Sistem dapat menerima upload dokumen dalam format PDF, DOCX, dan XLSX",
+    prioritas: "Tinggi",
+    sumber: "Kabag Keuangan",
+  },
+  {
+    id: "KF-002",
+    kategori: "Manajemen Dokumen",
+    kebutuhan: "Sistem dapat melakukan klasifikasi otomatis berdasarkan metadata dokumen",
+    prioritas: "Tinggi",
+    sumber: "Staf Kearsipan",
+  },
+  {
+    id: "KF-003",
+    kategori: "Pencarian",
+    kebutuhan: "Fitur pencarian full-text pada isi dan metadata dokumen",
+    prioritas: "Tinggi",
+    sumber: "Semua Pengguna",
+  },
+  {
+    id: "KF-004",
+    kategori: "Pencarian",
+    kebutuhan: "Filter pencarian berdasarkan tahun, jenis, dan status dokumen",
+    prioritas: "Sedang",
+    sumber: "Semua Pengguna",
+  },
+  {
+    id: "KF-005",
+    kategori: "Keamanan",
+    kebutuhan: "Kontrol akses berbasis peran (RBAC) untuk setiap level pengguna",
+    prioritas: "Tinggi",
+    sumber: "Kepala Dinas",
+  },
+  {
+    id: "KF-006",
+    kategori: "Keamanan",
+    kebutuhan: "Log audit untuk setiap aktivitas akses dan perubahan dokumen",
+    prioritas: "Tinggi",
+    sumber: "Inspektorat",
+  },
+  {
+    id: "KF-007",
+    kategori: "Alur Kerja",
+    kebutuhan: "Workflow persetujuan digital untuk dokumen yang memerlukan tanda tangan",
+    prioritas: "Sedang",
+    sumber: "Kabag Keuangan",
+  },
+  {
+    id: "KF-008",
+    kategori: "Retensi",
+    kebutuhan: "Notifikasi otomatis untuk dokumen yang mendekati masa retensi",
+    prioritas: "Sedang",
+    sumber: "Staf Kearsipan",
+  },
+  {
+    id: "KF-009",
+    kategori: "Laporan",
+    kebutuhan: "Dashboard dan laporan statistik pengarsipan (harian/bulanan/tahunan)",
+    prioritas: "Rendah",
+    sumber: "Kepala Dinas",
+  },
+  {
+    id: "KF-010",
+    kategori: "Integrasi",
+    kebutuhan: "Integrasi dengan sistem SIPKD / SIMDA untuk sinkronisasi data keuangan",
+    prioritas: "Rendah",
+    sumber: "Kabag Keuangan",
+  },
+];
+
+export const JENIS_DOKUMEN = [
+  {
+    id: "DOC-001",
+    kode: "KU-ANS",
+    nama: "Anggaran & Perencanaan",
+    subJenis: [
+      { nama: "DPA (Dokumen Pelaksanaan Anggaran)", retensi: "10 Tahun", format: "PDF", wajib: true },
+      { nama: "DPPA (Dokumen Perubahan Pelaksanaan Anggaran)", retensi: "10 Tahun", format: "PDF", wajib: true },
+      { nama: "RKA (Rencana Kerja dan Anggaran)", retensi: "5 Tahun", format: "PDF/XLSX", wajib: true },
+      { nama: "RKA Perubahan", retensi: "5 Tahun", format: "PDF/XLSX", wajib: false },
+    ],
+    warna: "#3B82F6",
+    icon: "📊",
+    jumlah: 4,
+  },
+  {
+    id: "DOC-002",
+    kode: "KU-KAS",
+    nama: "Kas & Pembayaran",
+    subJenis: [
+      { nama: "SPP (Surat Permintaan Pembayaran)", retensi: "10 Tahun", format: "PDF", wajib: true },
+      { nama: "SPM (Surat Perintah Membayar)", retensi: "10 Tahun", format: "PDF", wajib: true },
+      { nama: "SP2D (Surat Perintah Pencairan Dana)", retensi: "10 Tahun", format: "PDF", wajib: true },
+      { nama: "Kwitansi Pembayaran", retensi: "10 Tahun", format: "PDF/JPG", wajib: true },
+      { nama: "Bukti Transfer Bank", retensi: "5 Tahun", format: "PDF", wajib: true },
+    ],
+    warna: "#10B981",
+    icon: "💰",
+    jumlah: 5,
+  },
+  {
+    id: "DOC-003",
+    kode: "KU-PKS",
+    nama: "Pengadaan & Kontrak",
+    subJenis: [
+      { nama: "Surat Perjanjian / Kontrak Kerja", retensi: "10 Tahun", format: "PDF", wajib: true },
+      { nama: "Addendum Kontrak", retensi: "10 Tahun", format: "PDF", wajib: false },
+      { nama: "Berita Acara Serah Terima Pekerjaan", retensi: "10 Tahun", format: "PDF", wajib: true },
+      { nama: "Dokumen Lelang / Tender", retensi: "5 Tahun", format: "PDF", wajib: true },
+      { nama: "Jaminan Pelaksanaan / Uang Muka", retensi: "5 Tahun", format: "PDF", wajib: false },
+    ],
+    warna: "#F59E0B",
+    icon: "📋",
+    jumlah: 5,
+  },
+  {
+    id: "DOC-004",
+    kode: "KU-LPJ",
+    nama: "Laporan & Pertanggungjawaban",
+    subJenis: [
+      { nama: "LPJ Bendahara Pengeluaran (Bulanan)", retensi: "5 Tahun", format: "PDF/XLSX", wajib: true },
+      { nama: "LPJ Bendahara Penerimaan (Bulanan)", retensi: "5 Tahun", format: "PDF/XLSX", wajib: true },
+      { nama: "Laporan Keuangan Akhir Tahun", retensi: "Permanen", format: "PDF", wajib: true },
+      { nama: "Nota Perhitungan Anggaran", retensi: "Permanen", format: "PDF", wajib: true },
+    ],
+    warna: "#8B5CF6",
+    icon: "📑",
+    jumlah: 4,
+  },
+  {
+    id: "DOC-005",
+    kode: "KU-PAJ",
+    nama: "Pajak & Retribusi",
+    subJenis: [
+      { nama: "Bukti Setoran Pajak (SSP)", retensi: "10 Tahun", format: "PDF", wajib: true },
+      { nama: "Faktur Pajak", retensi: "10 Tahun", format: "PDF", wajib: true },
+      { nama: "Surat Keterangan Bebas Pajak", retensi: "5 Tahun", format: "PDF", wajib: false },
+    ],
+    warna: "#EF4444",
+    icon: "🧾",
+    jumlah: 3,
+  },
+  {
+    id: "DOC-006",
+    kode: "KU-AST",
+    nama: "Aset & Inventaris",
+    subJenis: [
+      { nama: "Kartu Inventaris Barang (KIB)", retensi: "Permanen", format: "XLSX/PDF", wajib: true },
+      { nama: "BAST Penghapusan Aset", retensi: "10 Tahun", format: "PDF", wajib: false },
+      { nama: "Dokumen Perolehan Aset", retensi: "Permanen", format: "PDF", wajib: true },
+    ],
+    warna: "#06B6D4",
+    icon: "🏗️",
+    jumlah: 3,
+  },
+];
+
+export const STAKEHOLDERS = [
+  { nama: "Kepala Dinas PU", peran: "Approver / Decision Maker", akses: "Full View" },
+  { nama: "Kepala Sub Bagian Keuangan", peran: "Manager Keuangan", akses: "Full Access" },
+  { nama: "Bendahara Pengeluaran", peran: "Operator Kas", akses: "Input & View" },
+  { nama: "Bendahara Penerimaan", peran: "Operator Penerimaan", akses: "Input & View" },
+  { nama: "PPTK (Pejabat Pelaksana Teknis Kegiatan)", peran: "Pengaju Dokumen", akses: "Upload & Track" },
+  { nama: "Staf Kearsipan", peran: "Pengelola Arsip", akses: "Full Access Arsip" },
+  { nama: "Inspektorat", peran: "Auditor Internal", akses: "Read Only (Audit)" },
+];
