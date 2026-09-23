@@ -1,0 +1,83 @@
+[
+  {
+    "id": 1,
+    "file": "Daftar Pegawai.pdf",
+    "namaDokumen": "Dokumen kepegawaian seluruh pegawai termasuk pegawai tidak tetap",
+    "eksis": true,
+    "ukuran": "2.16 Mb",
+    "tglUpload": "29-08-2023",
+    "tipe": "pdf"
+  },
+  {
+    "id": 2,
+    "file": "Dokumen Lelang Gedung.zip",
+    "namaDokumen": "Dokumen lelang gedung lantai 4",
+    "eksis": true,
+    "ukuran": "171.27 Kb",
+    "tglUpload": "31-08-2023",
+    "tipe": "zip"
+  },
+  {
+    "id": 3,
+    "file": "Dokumen Lelang Roda Empat.rar",
+    "namaDokumen": "Dokumen lelang kendaraan roda empat",
+    "eksis": true,
+    "ukuran": "171.05 Kb",
+    "tglUpload": "30-08-2023",
+    "tipe": "rar"
+  },
+  {
+    "id": 4,
+    "file": "Dokumen Pengadaan Barang.pdf",
+    "namaDokumen": "Dokumen pengadaan barang mebeler dan partisi Jogjawebdev",
+    "eksis": true,
+    "ukuran": "2.16 Mb",
+    "tglUpload": "29-08-2023",
+    "tipe": "pdf"
+  },
+  {
+    "id": 5,
+    "file": "Kartu Pegawai.7z",
+    "namaDokumen": "Permohonan kartu pegawai",
+    "eksis": true,
+    "ukuran": "170.82 Kb",
+    "tglUpload": "30-08-2023",
+    "tipe": "7z"
+  },
+  {
+    "id": 6,
+    "file": "KTP.pdf",
+    "namaDokumen": "Dokumen kepegawaian seluruh pegawai termasuk pegawai tidak tetap",
+    "eksis": true,
+    "ukuran": "2.16 Mb",
+    "tglUpload": "29-08-2023",
+    "tipe": "pdf"
+  },
+  {
+    "id": 7,
+    "file": "Permohonan Ijin Usaha.zip",
+    "namaDokumen": "Permohonan ijin menjalankan usaha",
+    "eksis": true,
+    "ukuran": "171.27 Kb",
+    "tglUpload": "30-08-2023",
+    "tipe": "zip"
+  },
+  {
+    "id": 8,
+    "file": "Rincian Biaya Pembangunan.xlsx",
+    "namaDokumen": "Pembangunan gedung dua lantai",
+    "eksis": true,
+    "ukuran": "7.83 Kb",
+    "tglUpload": "31-08-2023",
+    "tipe": "xlsx"
+  },
+  {
+    "id": 9,
+    "file": "Rincian Biaya Pengadaan Barang.pdf",
+    "namaDokumen": "Dokumen pengadaan barang mebeler dan partisi Jogjawebdev",
+    "eksis": true,
+    "ukuran": "2.16 Mb",
+    "tglUpload": "29-08-2023",
+    "tipe": "pdf"
+  }
+]
