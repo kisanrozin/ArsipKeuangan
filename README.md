@@ -2,6 +2,39 @@
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
+## Dua Mode Tampilan: Tamu (Viewer) & Admin
+
+Aplikasi dibuka dalam mode **Tamu** (baca-saja). Untuk masuk ke layar admin, klik
+ikon user (👤) di kanan atas navbar — untuk saat ini tanpa login, sesuai
+kebutuhan; statusnya disimpan di `sessionStorage` (`pu_peran_tampilan`).
+
+| Mode | Isi | Kontrol input |
+| --- | --- | --- |
+| **Tamu** | `src/components/TamuRingkasan.js` — blok statistik yang sama dengan beranda admin, rekap per bulan, tabel kegiatan | Tidak ada (tambah/ubah/hapus/unggah disembunyikan) |
+| **Admin** | `Dashboard`, `Data Kegiatan`, `History Revisi DIPA` (tampilan yang sudah ada sebelumnya) | Tombol `+ Tambah Data`, ubah, hapus, dan upload aktif |
+
+### Blok yang dipakai bersama
+
+`src/components/StatistikOperasional.js` berisi blok **"Ringkasan Statistik
+Operasional"** yang identik di kedua tampilan — kartu *Total Pagu / Total
+Realisasi SPM / Persentase*, bagian **"Realisasi Data Per Bulan"** beserta filter
+tahun–bulan, dan tabel **"Pagu & Realisasi (Bulan) (Tahun)"** (kolom Pagu Bulan,
+Pagu DIPA Revisi, Realisasi, Persentase, SPM, Berkas Drive).
+
+Props `readOnly` yang membedakan keduanya: pada mode tamu tombol "Sinkronkan
+Sekarang" dan kartu yang bisa diklik disembunyikan, plus badge "Mode Tamu · baca
+saja". Sumber data keduanya — `src/data/sp2dLive.js` (SP2D Sheet + Google
+Drive) dan `src/data/rekapKegiatan.js` / `rekapSpm.js` / `rekapDipa.js` — dibaca
+sekali lewat toko data bersama, sehingga angkanya dijamin sama persis.
+
+Data lain yang dilihat tamu: baris yang sudah diinput admin lewat `+ Tambah
+Data` (`src/data/KegiatanTambahan.js` → `localStorage`), digabung dengan daftar
+kode kegiatan referensi.
+
+Kode peran: `src/context/PeranContext.js`. Halaman yang hanya boleh dibuka admin
+(dashboard, history revisi DIPA) otomatis dialihkan kembali ke halaman tamu bila
+peran diturunkan.
+
 ## Available Scripts
 
 In the project directory, you can run:

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { usePeran } from "../context/PeranContext";
 
 // Helper icon component for file types
 function FileIcon({ tipe }) {
@@ -50,6 +51,8 @@ function FileIcon({ tipe }) {
 // Reusable File Manager Section — satu panel tabel Drive
 // ============================================================
 export default function DriveSection({ label, color, icon, folderId, apiKey, dokumenData }) {
+  // Mode tamu → tombol unggah & tarik data disembunyikan (baca-saja).
+  const { isAdmin } = usePeran();
   const [files, setFiles] = useState([]);
   const [search, setSearch] = useState("");
   const [entriesPerPage, setEntriesPerPage] = useState(10);
@@ -63,9 +66,14 @@ export default function DriveSection({ label, color, icon, folderId, apiKey, dok
   const [currentFolderName, setCurrentFolderName] = useState("Root");
   const [folders, setFolders] = useState([]);
 
-  // Index untuk deep search
+  // Index untuk deep search (folder + file di dalam folder, rekursif)
   const [allIndexedFiles, setAllIndexedFiles] = useState([]);
   const [allIndexedFolders, setAllIndexedFolders] = useState([]);
+  const [isIndexing, setIsIndexing] = useState(false);
+  const [indexedFolders, setIndexedFolders] = useState(0);
+  const [indexError, setIndexError] = useState(null);
+  // Fungsi pembatal crawl, dipakai agar crawl tidak menimpa state setelah unmount.
+  const crawlAbortRef = useRef(null);
 
   const [previewFile, setPreviewFile] = useState(null);
   const [previewZoom, setPreviewZoom] = useState(1);
@@ -125,44 +133,135 @@ export default function DriveSection({ label, color, icon, folderId, apiKey, dok
     };
   };
 
-  // Crawler
+  // ─── Deep index / crawler ───
+  // Menelusuri SELURUH pohon folder (bukan hanya folder yang sedang dibuka)
+  // supaya pencarian bisa menemukan folder maupun file di dalam folder.
+  const FOLDER_MIME = "application/vnd.google-apps.folder";
+
+  // Ambil seluruh isi satu folder, mengikuti halaman (pageToken) sampai habis.
+  const listFolderChildren = async (folderId, aKey) => {
+    const items = [];
+    let pageToken = null;
+    let guard = 0;
+    do {
+      const params = new URLSearchParams({
+        q: `'${folderId}' in parents and trashed=false`,
+        fields: "nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime,webViewLink,webContentLink)",
+        pageSize: "200",
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+        key: aKey,
+      });
+      if (pageToken) params.set("pageToken", pageToken);
+
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}${txt ? ` — ${txt.slice(0, 160)}` : ""}`);
+      }
+      const data = await res.json();
+      items.push(...(data.files || []));
+      pageToken = data.nextPageToken || null;
+      guard += 1;
+    } while (pageToken && guard < 20);
+    return items;
+  };
+
   const crawlDriveTree = async (rootId, rootName, aKey) => {
+    if (!rootId || !aKey) return;
+
+    // Batalkan crawl sebelumnya jika masih berjalan
+    if (typeof crawlAbortRef.current === "function") {
+      crawlAbortRef.current();
+    }
+
+    let aborted = false;
+    const cancel = () => { aborted = true; };
+    crawlAbortRef.current = cancel;
+
+    setIsIndexing(true);
+    setIndexError(null);
+    setIndexedFolders(0);
+
+    // Hasil diurutkan agar tampilan stabil (nama folder, lalu nama file).
+    const fileMap = new Map();
+    const folderMap = new Map();
+    const visited = new Set([rootId]);
+    const queue = [{ id: rootId, name: rootName, pathStack: [] }];
+
+    // Batas aman agar tidak berjalan tanpa henti pada folder sangat besar.
+    const MAX_FOLDERS = 500;
+    let folderCount = 0;
+
     try {
-      let collectedFiles = [];
-      let collectedFolders = [];
-      let queue = [{ id: rootId, name: rootName, pathStack: [] }];
-      let visited = new Set([rootId]);
-      while (queue.length > 0 && visited.size < 40) {
+      while (queue.length > 0 && !aborted && folderCount < MAX_FOLDERS) {
         const current = queue.shift();
+        folderCount += 1;
+        setIndexedFolders(folderCount);
+
+        let children;
         try {
-          const listUrl = `https://www.googleapis.com/drive/v3/files?q='${current.id}'+in+parents+and+trashed=false&fields=files(id,name,mimeType,size,createdTime,modifiedTime,webViewLink,webContentLink)&pageSize=100&key=${aKey}`;
-          const res = await fetch(listUrl);
-          if (!res.ok) continue;
-          const data = await res.json();
-          const items = data.files || [];
-          const subFolders = items.filter(item => item.mimeType === "application/vnd.google-apps.folder");
-          const fileItems = items.filter(item => item.mimeType !== "application/vnd.google-apps.folder");
-          const nextStack = [...current.pathStack, { id: current.id, name: current.name }];
-          fileItems.forEach((f, idx) => {
-            collectedFiles.push(formatDriveItem(f, current, current.pathStack, idx));
-          });
-          for (const sf of subFolders) {
-            const currentPathStr = nextStack.map(p => p.name).join(" › ");
-            const sfPathStr = `${currentPathStr} › ${sf.name}`;
-            collectedFolders.push({
-              id: sf.id, name: sf.name, parentId: current.id,
-              parentName: current.name, path: sfPathStr, pathStack: nextStack,
-            });
-            if (!visited.has(sf.id)) {
-              visited.add(sf.id);
-              queue.push({ id: sf.id, name: sf.name, pathStack: nextStack });
+          children = await listFolderChildren(current.id, aKey);
+        } catch (e) {
+          // Folder gagal dibaca (izin/kunci/rate-limit) → lewati, jangan hentikan crawl.
+          console.warn(`Crawler gagal membaca folder "${current.name}":`, e);
+          continue;
+        }
+
+        const nextStack = [...current.pathStack, { id: current.id, name: current.name }];
+        const parentPathStr = nextStack.map(p => p.name).join(" › ");
+
+        for (const child of children) {
+          const isFolder = child.mimeType === FOLDER_MIME;
+          if (isFolder) {
+            const path = `${parentPathStr} › ${child.name}`;
+            if (!folderMap.has(child.id)) {
+              folderMap.set(child.id, {
+                id: child.id,
+                name: child.name,
+                parentId: current.id,
+                parentName: current.name,
+                path,
+                pathStack: nextStack,
+                jumlahFile: 0,
+              });
+            }
+            if (!visited.has(child.id)) {
+              visited.add(child.id);
+              queue.push({ id: child.id, name: child.name, pathStack: nextStack });
+            }
+          } else if (!fileMap.has(child.id)) {
+            fileMap.set(child.id, formatDriveItem(child, current, current.pathStack, fileMap.size));
+            // Rekam jumlah file per folder agar bisa ditampilkan di kartu folder.
+            if (folderMap.has(current.id)) {
+              folderMap.get(current.id).jumlahFile += 1;
             }
           }
-        } catch (e) { console.warn("Crawler subfolder error:", e); }
+        }
       }
-      if (collectedFiles.length > 0) setAllIndexedFiles(collectedFiles);
-      if (collectedFolders.length > 0) setAllIndexedFolders(collectedFolders);
-    } catch (e) { console.warn("Crawler error:", e); }
+
+      if (!aborted) {
+        const nextFiles = [...fileMap.values()];
+        const nextFolders = [...folderMap.values()].sort((a, b) => a.path.localeCompare(b.path));
+        setAllIndexedFiles(nextFiles);
+        setAllIndexedFolders(nextFolders);
+
+        // Bila pohon surpass batas, beri tahu pengguna agar tidak salah meyakini lengkap.
+        if (folderCount >= MAX_FOLDERS && queue.length > 0) {
+          setIndexError(
+            `Indeks melebihi ${MAX_FOLDERS} folder. Hasil pencarian mungkin belum lengkap — gunakan "Tarik Data dari Drive" untuk menyegarkan.`
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("Crawler error:", e);
+      setIndexError(`Gagal membangun indeks: ${e.message}`);
+    } finally {
+      if (!aborted) setIsIndexing(false);
+      if (crawlAbortRef.current === cancel) {
+        crawlAbortRef.current = null;
+      }
+    }
   };
 
   // Fetch data from Google Drive
@@ -194,7 +293,9 @@ export default function DriveSection({ label, color, icon, folderId, apiKey, dok
         const currentFolderObj = { id: fId, name: folderName };
         setFolders(subFolders.map(f => ({ id: f.id, name: f.name, parentId: fId, pathStack: folderStack })));
         formatted = fileItems.map((item, idx) => formatDriveItem(item, currentFolderObj, folderStack, idx));
-        if (allIndexedFiles.length === 0) crawlDriveTree(fId, folderName, aKey);
+        // Bangun indeks seluruh pohon folder agar pencarian menemukan
+        // folder/file di dalam folder, bukan hanya isi folder terbuka.
+        setTimeout(() => { crawlDriveTree(fId, folderName, aKey); }, 0);
       } else {
         const fileUrl = `https://www.googleapis.com/drive/v3/files/${fId}?alt=media&key=${aKey}`;
         const fileRes = await fetch(fileUrl);
@@ -234,28 +335,36 @@ export default function DriveSection({ label, color, icon, folderId, apiKey, dok
   // Otomatis fetch saat mount
   useEffect(() => {
     fetchGoogleDriveData(folderId, apiKey);
+    return () => {
+      // Batalkan crawl yang masih berjalan saat komponen dilepas.
+      if (typeof crawlAbortRef.current === "function") {
+        crawlAbortRef.current();
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Search & filter
+  // Search & filter — mencakup folder maupun file di dalam folder.
   const isSearching = search.trim().length > 0;
   const q = search.toLowerCase().trim();
+  const matches = (haystack) => typeof haystack === "string" && haystack.toLowerCase().includes(q);
+
   const filteredFolders = isSearching
     ? (allIndexedFolders.length > 0 ? allIndexedFolders : folders).filter(f =>
-        f.name.toLowerCase().includes(q) || (f.path && f.path.toLowerCase().includes(q))
+        matches(f.name) || matches(f.path)
       )
     : folders;
+
   const sourceFiles = isSearching && allIndexedFiles.length > 0 ? allIndexedFiles : files;
-  const filteredFiles = sourceFiles.filter(f => {
-    if (!isSearching) return true;
-    return (
-      f.file.toLowerCase().includes(q) ||
-      f.namaDokumen.toLowerCase().includes(q) ||
-      (f.tglUpload && f.tglUpload.includes(q)) ||
-      (f.folderName && f.folderName.toLowerCase().includes(q)) ||
-      (f.folderPath && f.folderPath.toLowerCase().includes(q))
-    );
-  });
+  const filteredFiles = isSearching
+    ? sourceFiles.filter(f =>
+        matches(f.file) ||
+        matches(f.namaDokumen) ||
+        matches(f.tglUpload) ||
+        matches(f.folderName) ||
+        matches(f.folderPath)
+      )
+    : sourceFiles;
 
   // Sort
   const sortedFiles = [...filteredFiles].sort((a, b) => {
@@ -389,14 +498,23 @@ export default function DriveSection({ label, color, icon, folderId, apiKey, dok
             Kembali
           </button>
         )}
-        <button className="fm-btn fm-btn-upload" onClick={() => setShowUploadModal(true)}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          Upload File
-        </button>
-        <button className="fm-btn fm-btn-drive" onClick={() => setShowDriveModal(true)} title="Tarik data dari Google Drive">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m8 17 4 4 4-4"/></svg>
-          {isDriveLoading ? "Mengambil Data..." : "Tarik Data dari Drive"}
-        </button>
+        {isAdmin && (
+          <button className="fm-btn fm-btn-upload" onClick={() => setShowUploadModal(true)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload File
+          </button>
+        )}
+        {isAdmin && (
+          <button className="fm-btn fm-btn-drive" onClick={() => setShowDriveModal(true)} title="Tarik data dari Google Drive">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m8 17 4 4 4-4"/></svg>
+            {isDriveLoading ? "Mengambil Data..." : "Tarik Data dari Drive"}
+          </button>
+        )}
+        {!isAdmin && (
+          <span className="tm-inline-badge" title="Tamu hanya bisa melihat data, tidak bisa mengunggah berkas">
+            👁 Mode Tamu · baca saja
+          </span>
+        )}
       </div>
 
       {/* ── Breadcrumb ── */}
@@ -429,6 +547,11 @@ export default function DriveSection({ label, color, icon, folderId, apiKey, dok
               <span>📁</span> Folder yang Cocok ({filteredFolders.length})
             </div>
           )}
+          {!isSearching && (
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#475569", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              <span>📁</span> Folder ({filteredFolders.length})
+            </div>
+          )}
           <div className="fm-folder-grid">
             {filteredFolders.map(folder => (
               <button key={folder.id} className="fm-folder-card"
@@ -442,6 +565,11 @@ export default function DriveSection({ label, color, icon, folderId, apiKey, dok
                 <span className="fm-folder-name" title={folder.name}>{folder.name}</span>
                 {isSearching && folder.path && (
                   <span className="fm-folder-path-label" title={folder.path}>{folder.path}</span>
+                )}
+                {folder.jumlahFile > 0 && (
+                  <span className="fm-folder-file-count" title={`${folder.jumlahFile} berkas di dalam folder ini`}>
+                    {folder.jumlahFile} berkas
+                  </span>
                 )}
               </button>
             ))}
@@ -462,7 +590,7 @@ export default function DriveSection({ label, color, icon, folderId, apiKey, dok
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             Search:
             <div style={{ position: "relative", display: "inline-block" }}>
-              <input type="text" className="fm-search-input" placeholder="Cari file / folder..."
+              <input type="text" className="fm-search-input" placeholder="Cari folder / file di dalam folder..."
                 value={search} onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
                 style={{ paddingRight: search ? 24 : 10 }}
               />
@@ -481,8 +609,30 @@ export default function DriveSection({ label, color, icon, folderId, apiKey, dok
       {/* Search Info Bar */}
       {isSearching && (
         <div className="fm-search-info-bar">
-          <span>🔍 Hasil pencarian untuk <strong>"{search}"</strong>: Ditemukan <strong>{filteredFiles.length}</strong> berkas dan <strong>{filteredFolders.length}</strong> folder</span>
+          <span>
+            🔍 Hasil pencarian untuk <strong>"{search}"</strong>: Ditemukan{" "}
+            <strong>{filteredFiles.length}</strong> berkas dan{" "}
+            <strong>{filteredFolders.length}</strong> folder
+            {isIndexing && <em style={{ marginLeft: 6 }}>— sedang mengindeks…</em>}
+          </span>
           <button className="fm-search-clear-btn" onClick={() => setSearch("")}>✕ Hapus Pencarian</button>
+        </div>
+      )}
+
+      {/* Status indeks Drive — hanya saat tidak searching */}
+      {(isIndexing || indexError) && !isSearching && (
+        <div className="fm-index-status">
+          {isIndexing && (
+            <span className="fm-index-status-item fm-index-status-active">
+              <span className="fm-index-spinner" />
+              Mengindeks folder &amp; file di dalam folder… ({indexedFolders} folder)
+            </span>
+          )}
+          {indexError && (
+            <span className="fm-index-status-item fm-index-status-error" title={indexError}>
+              ⚠️ {indexError}
+            </span>
+          )}
         </div>
       )}
 
@@ -559,7 +709,11 @@ export default function DriveSection({ label, color, icon, folderId, apiKey, dok
             ) : (
               <tr>
                 <td colSpan={7} style={{ textAlign: "center", padding: "30px", color: "#9ca3af" }}>
-                  {isSearching ? `Tidak ada berkas yang cocok dengan "${search}".` : "Tidak ada data arsip yang ditemukan."}
+                  {isSearching
+                    ? isIndexing
+                      ? `Sedang mengindeks folder di dalam Drive…`
+                      : `Tidak ada berkas yang cocok dengan "${search}".`
+                    : "Tidak ada data arsip yang ditemukan."}
                 </td>
               </tr>
             )}
