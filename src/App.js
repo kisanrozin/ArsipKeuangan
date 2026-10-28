@@ -28,6 +28,11 @@ function IsiApp() {
      splash masih tampil, halaman aplikasi belum dirender sama sekali
      — jadi tidak ada permintaan ke Drive/Sheets sebelum pengguna
      benar-benar masuk. */
+  /* Layar sambutan (splash) tampil lebih dulu setiap kali aplikasi
+     dibuka, lalu ditutup lewat tombol "Masuk ke Dashboard". Selama
+     splash masih tampil, halaman aplikasi belum dirender sama sekali
+     — jadi tidak ada permintaan ke Drive/Sheets sebelum pengguna
+     benar-benar masuk. */
   const [splashTutup, setSplashTutup] = React.useState(false);
 
   /* Pra-muat data kegiatan Google Drive di latar belakang begitu pengguna
