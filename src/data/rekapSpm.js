@@ -34,6 +34,7 @@
    ══════════════════════════════════════════════════════════════ */
 
 import { BULAN_ANGGARAN_OPTIONS, TAHUN_ANGGARAN_AKTIF } from "./masterData";
+import { petaTabRekap } from "./daftarSheet";
 
 export const SPJ_FOLDER_ID = "1gZkmFPnVyWO5fqWLsHGAv_eu56WOdt_8";
 
@@ -50,19 +51,14 @@ const REKAP_ID_CADANGAN = "105E2JFMvqK67xxSmoqoE0whcGWm8S8tu";
    (EAF / EBA / EBC) sehingga tidak ikut terhitung. */
 const POLA_KODE_INDUK = /^\d{4}$/;
 
-/* Tab kumulatif untuk tiap bulan. beberapa nama alternatif
-   dicoba lebih dulu, dipakai yang pertama berhasil dibaca. */
-const TAB_PER_BULAN = {
-  januari: ["Jan", "JANUARI 2026"],
-  februari: ["Jan-Feb", "Jan-Februari"],
-  maret: ["Jan-Maret", "Jan-Mrt"],
-  april: ["Jan-April", "Jan-Apr"],
-  mei: ["Jan-Mei", "Jan-May"],
-  juni: ["Jan-Juni", "Jun"],
-  juli: ["Jan-Juli", "Jul"],
-  agustus: ["Jan-Agst", "Jan-Agustus", "Jan-Agus"],
-  september: ["Jan-Sept", "Jan-Sep", "Jan-September"],
-};
+/* Tab kumulatif untuk tiap bulan TIDAK diketik manual di sini.
+   Namanya dibaca dari daftar tab ASLI spreadsheet (src/data/daftarSheet.js)
+   setiap kali dimuat, sehingga:
+     · tab yang baru dibuat di Drive langsung terbaca (realtime);
+     · tab yang belum ada tidak pernah dipanggil. Penting, karena
+       GVIZ diam-diam mengembalikan tab pertama bila nama tab salah —
+       tanpa itu, bulan tanpa tab akan menampilkan angka bulan lain;
+     · bulan tanpa tab → kosong. */
 
 const URUTAN_BULAN = BULAN_ANGGARAN_OPTIONS.map((b) => b.id);
 const NOMOR_BULAN = URUTAN_BULAN.reduce((peta, id, i) => {
@@ -256,21 +252,24 @@ async function bacaTab(spreadsheetId, tab) {
 }
 
 /* ── Muat seluruh tab bulanan ──────────────────────────────────── */
-export async function muatRekapRealisasiSpm(apiKey) {
+export async function muatRekapRealisasiSpm(apiKey, paksa = false) {
   const spreadsheetId = rekapIdAktif() || (await cariIdRekap(apiKey));
 
+  // Nama tab diambil dari daftar tab asli spreadsheet — bukan daftar
+  // manual — sehingga tab baru di Drive langsung ikut terbaca.
+  const peta = await petaTabRekap(spreadsheetId, paksa);
+
   const hasil = await Promise.allSettled(
-    URUTAN_BULAN.map(async (bulan) => {
-      const namaTab = TAB_PER_BULAN[bulan] || [];
-      for (const tab of namaTab) {
-        try {
-          const data = await bacaTab(spreadsheetId, tab);
-          if (data) return { bulan, data };
-        } catch (e) {
-          // Tab ini tidak ada / tidak terbaca — coba nama berikutnya.
-        }
+    URUTAN_BULAN.map(async (bulan, i) => {
+      const namaTab = peta[i + 1];
+      // Tab bulan ini belum ada di spreadsheet → bulan dikosongkan.
+      if (!namaTab) return null;
+      try {
+        const data = await bacaTab(spreadsheetId, namaTab);
+        return data ? { bulan, data } : null;
+      } catch (e) {
+        return null;
       }
-      return null;
     })
   );
 
@@ -317,7 +316,9 @@ export function rekapRealisasiSpm(data, tahun, bulanId) {
 
   const perBulan = data.perBulan || {};
   const tab = perBulan[bulanId];
-  // Tanpa tab untuk bulan ini → tidak ada data yang bisa ditampilkan.
+  // Tanpa tab untuk bulan ini → tidak ada data dari tab spreadsheet.
+  // (data rekap per bulan bisa berasal dari sumber lain; namun modul ini
+  //  fokus pada rekap SPM dari tab spreadsheet; jika tab tidak ada, kembalikan kosong)
   if (!tab) return kosong;
 
   const dasar = [];
@@ -398,7 +399,7 @@ export function ambilRekapSpm(apiKey, paksa = false) {
   if (segar && !paksa) return Promise.resolve(cache.data);
   if (sedang) return sedang;
 
-  sedang = muatRekapRealisasiSpm(apiKey)
+  sedang = muatRekapRealisasiSpm(apiKey, paksa)
     .then((data) => {
       cache = { data, waktu: Date.now() };
       sedang = null;

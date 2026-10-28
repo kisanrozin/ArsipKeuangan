@@ -1,4 +1,4 @@
-﻿/* ============================================================
+/* ============================================================
    App.css – Gaya Perpustakaan Kementerian PUPR
    Clean white, minimal, photo-hero, editorial
    ============================================================ */
@@ -538,6 +538,16 @@ body {
   min-height: 2.6em;
 }
 
+/* Keterangan tambahan tepat di bawah nominal (mis. "DIPA Revisi 10 ·
+   31 Juli 2026" pada kartu Pagu Bulan). */
+.stat-kpi-after {
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-top: 6px;
+  line-height: 1.35;
+}
+
 .stat-progress {
   margin-top: auto;
   padding-top: 14px;
@@ -736,6 +746,121 @@ body {
   flex-wrap: wrap;
 }
 
+/* ── Panduan filter bulan (chips + ringkasan) ── */
+.dk-filter-bulan {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.dk-filter-bulan-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dk-filter-bulan-lead {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  margin-right: 2px;
+}
+
+.dk-chip-bulan {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  padding: 4px 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dk-chip-bulan:hover { background: #e2e8f0; }
+
+.dk-chip-bulan-aktif {
+  color: #fff;
+  background: var(--navy);
+  border-color: var(--navy);
+}
+.dk-chip-bulan-aktif:hover { background: #16224f; }
+
+.dk-chip-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-radius: 20px;
+  padding: 1px 7px;
+}
+.dk-chip-bulan-aktif .dk-chip-count {
+  color: var(--navy);
+  background: #fff;
+}
+
+.dk-filter-bulan-ringkas {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #475569;
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 8px;
+}
+.dk-filter-bulan-ringkas strong { color: #0f172a; }
+
+.dk-fbr-baris,
+.dk-fbr-spm {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dk-fbr-spm {
+  color: #1e3a8a;
+}
+.dk-fbr-spm strong { color: #1d4ed8; }
+
+.dk-fbr-spm-lead {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.dk-fbr-berkas {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dk-btn-spm {
+  color: #7c2d12;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+.dk-btn-spm:hover:not(:disabled) { background: #ffedd5; }
+.dk-btn-spm:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.dk-modal-kosong {
+  padding: 18px 16px;
+  font-size: 13px;
+  color: #64748b;
+}
+
 .dk-input {
   font: inherit;
   font-size: 13px;
@@ -925,6 +1050,43 @@ body {
   padding: 2px 9px;
 }
 
+/* Status sumber data di info bar (tersimpan / menyegarkan / terbaru) */
+.dk-infobar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.dk-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+}
+.dk-dot-live { background: #16a34a; }
+.dk-dot-cache { background: #d97706; }
+.dk-dot-loading {
+  background: #2563eb;
+  animation: dk-pulse 1s ease-in-out infinite;
+}
+
+@keyframes dk-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.dk-btn-refresh {
+  color: #334155;
+  background: #fff;
+  border-color: #cbd5e1;
+}
+.dk-btn-refresh:hover:not(:disabled) { background: #e2e8f0; }
+.dk-btn-refresh:disabled { opacity: 0.55; cursor: progress; }
+
 .dk-table-wrap {
   background: #fff;
   border: 1px solid var(--border);
@@ -1033,7 +1195,76 @@ body {
   white-space: nowrap;
 }
 
-.dk-bukti { text-align: center; white-space: nowrap; }
+/* Daftar nomor SPM pada mode tabel datar (kolom "No. SPM"). */
+.dk-spm-nomor {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #334155;
+  max-width: 340px;
+  word-break: break-word;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Bukti laporan SPM: tabel mini yang ditampilkan LANGSUNG di dalam
+   sel (tanpa dropdown). Dibatasi tinggi + bisa digulir supaya tabel
+   utama tidak memanjang. */
+.dk-bukti { text-align: left; white-space: normal; }
+
+.dk-spm-scroll {
+  max-height: 190px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid #fde8d0;
+  border-radius: 6px;
+  background: #fffdf9;
+}
+
+.dk-spm-scroll .dk-spm-tabel { width: 100%; }
+
+/* Mini-tabel bukti SPM (per kode kegiatan, di dalam kolom Bukti Kerja).
+   Setiap SPM = satu baris horizontal: No.SPM | Rekening | Nilai | Tanggal */
+.dk-spm-tabel {
+  border-collapse: collapse;
+  width: 100%;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.dk-spm-tabel td {
+  padding: 1px 5px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  vertical-align: middle;
+  border-bottom: 1px solid #fde8d0;
+}
+
+.dk-spm-tabel tbody tr:last-child td { border-bottom: none; }
+
+.dk-spm-td-no { min-width: 80px; }
+.dk-spm-td-rek { color: #64748b; }
+.dk-spm-td-nilai { text-align: right; color: #0f172a; font-variant-numeric: tabular-nums; }
+.dk-spm-td-tgl { text-align: center; color: #64748b; }
+
+.dk-spm-link {
+  font-size: 12px;
+  font-weight: 700;
+  color: #7c2d12;
+  text-decoration: none;
+}
+.dk-spm-link:hover { text-decoration: underline; }
+
+/* Baris total di tfoot */
+.dk-spm-tfoot td {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  background: #fff7ed;
+  border-top: 1px solid #fed7aa !important;
+  padding: 2px 5px;
+}
+.dk-spm-td-total-label { color: #78350f; }
+.dk-spm-td-total-nilai { text-align: right; }
+.dk-spm-td-total-nilai strong { color: #0f172a; }
 
 .dk-btn-dok {
   font: inherit;
@@ -1045,8 +1276,18 @@ body {
   border-radius: 5px;
   padding: 4px 9px;
   cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
 }
 .dk-btn-dok:hover { background: #dbeafe; }
+
+/* Tombol bukti laporan SPM khusus bulan filter (per kode kegiatan) */
+.dk-btn-dok-bulan {
+  color: #7c2d12;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+.dk-btn-dok-bulan:hover { background: #ffedd5; }
 
 .dk-link-drive {
   margin-left: 6px;
@@ -1096,6 +1337,59 @@ body {
 .dk-table-modal th:last-child,
 .dk-table-modal td:last-child { padding-right: 20px; }
 
+/* Modal bukti SPM: bila daftar bukti banyak, area tabel dibatasi
+   tingginya supaya modal tidak terlalu memanjang — tabelnya bisa
+   digulir dan judul kolom tetap menempel di atas. Daftar yang pendek
+   tidak terpengaruh (tidak ada scrollbar). */
+.dk-modal-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.dk-modal-scroll .dk-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+/* Kelompok kode akun belanja pada bukti PDF di modal Bukti Laporan
+   SPM — tampilannya mengikuti daftar kode belanja di halaman utama
+   (kode + nama + tag "Kode Akun Belanja" + ringkas jumlah). */
+.dk-grup-belanja {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dk-grup-belanja:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.dk-grup-belanja-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 10px 20px 6px;
+  background: #fffdf9;
+}
+
+.dk-grup-belanja-head .dk-kode {
+  font-size: 13px;
+}
+
+.dk-grup-belanja-nama {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.dk-grup-belanja-head .dk-sub {
+  display: inline;
+  margin-left: auto;
+}
+
 .dk-modal-subhead {
   padding: 10px 20px;
   font-size: 11.5px;
@@ -1114,6 +1408,22 @@ body {
   color: #334155;
   background: #f8fafc;
   border-top: 2px solid var(--border);
+}
+
+/* Status pemuatan realtime berkas SPM di modal Bukti Laporan SPM. */
+.dk-modal-live {
+  padding: 6px 20px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #166534;
+  background: #f0fdf4;
+  border-bottom: 1px solid #dcfce7;
+}
+
+.dk-modal-live-galat {
+  color: #9a3412;
+  background: #fff7ed;
+  border-bottom-color: #fed7aa;
 }
 
 /* ══════════════════════════════════════════
@@ -3782,6 +4092,11 @@ textarea.form-ctrl { resize: vertical; min-height: 90px; }
   color: #0f172a;
 }
 
+.vt-act-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .vt-act-primary {
   background: #1B2A6B;
   color: #ffffff;
@@ -4930,6 +5245,74 @@ textarea.form-ctrl { resize: vertical; min-height: 90px; }
 
 .hrd-btn-ghost:hover {
   background: #f1f5f9;
+}
+
+/* ── Drop Zone (History Revisi DIPA — Tambah Data via drag & drop) ── */
+.hrd-dropzone {
+  border: 2px dashed #d1d5db;
+  border-radius: 8px;
+  padding: 26px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  background: #f9fafb;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.hrd-dropzone:hover {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.hrd-dropzone-active {
+  border-color: #3b82f6;
+  background: #dbeafe;
+  border-style: solid;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.hrd-dropzone-filled {
+  border-color: #10b981;
+  background: #ecfdf5;
+  border-style: solid;
+}
+
+.hrd-dropzone-text {
+  font-size: 13.5px;
+  color: #6b7280;
+  line-height: 1.5;
+}
+
+.hrd-dropzone-hint {
+  font-size: 11.5px;
+  color: #9ca3af;
+  letter-spacing: 0.3px;
+}
+
+.hrd-dropzone-logo {
+  font-size: 34px;
+  line-height: 1;
+}
+
+.hrd-dropzone-selected {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 0 4px;
+}
+
+.hrd-dropzone-filename {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hrd-btn-primary {

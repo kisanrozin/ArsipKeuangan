@@ -542,7 +542,8 @@ export const DOKUMEN_RKKS = [
 export const SHEET_TABS = [
   { id: "sheet1",   label: "Sheet1",                      gid: "1721184120" },
   { id: "sheet2",   label: "Sheet2",                      gid: "1028099555" },
-  { id: "agustus",  label: "Salinan dari JAN SD AGUSTUS", gid: "1550175425" },
+  { id: "september", label: "JAN SD SEPTEMBER",           gid: "1226516203" },
+  { id: "agustus",  label: "JAN SD AGUSTUS",              gid: "1550175425" },
   { id: "juli",     label: "JAN SD JULI",                 gid: "1442596412" },
   { id: "juni",     label: "JAN SD JUNI",                 gid: "1727706108" },
   { id: "mei",      label: "JAN SD MEI",                  gid: "1040164856" },
@@ -1372,6 +1373,43 @@ export const MARET_BIDANG_DETAIL = {
     { no: 2, kodeKegiatan: "521219", grupKode: "WA 7769 AFA 001.100C", realisasi: 118479151, noSpm: 17, status: "LENGKAP" },
     { no: 3, kodeKegiatan: "—", grupKode: "WA 7769 AFA 001.100C", realisasi: 103354153, noSpm: 18, status: "LENGKAP" },
     { no: 4, kodeKegiatan: "—", grupKode: "WA 7769 AFA 001.100C", realisasi: 103354153, noSpm: 42, status: "LENGKAP" },
+  ],
+};
+
+// Ringkasan daftar SPM per bidang untuk tab "JAN SD SEPTEMBER"
+// (dihitung dari baris daftar SPM tab "JAN SD SEPTEMBER"; angka ini
+//  dipakai sebagai cadangan bila sinkronisasi live GVIZ gagal)
+export const SEPTEMBER_BIDANG_SUMMARY = {
+  SDA: { jumlahSpm: 166, tidakTersedia: 52, target: "—" },
+  CKPS: { jumlahSpm: 161, tidakTersedia: 53, target: "—" },
+  UPTU: { jumlahSpm: 311, tidakTersedia: 1, target: "—" },
+};
+
+// Contoh baris daftar SPM (fallback bila sinkronisasi live gagal)
+export const SEPTEMBER_BIDANG_DETAIL = {
+  SDA: [
+    { no: 1, kodeKegiatan: "521211", grupKode: "521211", realisasi: 5147288, noSpm: 51, status: "LENGKAP" },
+    { no: 2, kodeKegiatan: "521211", grupKode: "521211", realisasi: 1273000, noSpm: 136, status: "LENGKAP" },
+    { no: 3, kodeKegiatan: "521211", grupKode: "521211", realisasi: 1830000, noSpm: 161, status: "LENGKAP" },
+    { no: 4, kodeKegiatan: "521211", grupKode: "521211", realisasi: 5664282, noSpm: 300, status: "LENGKAP" },
+    { no: 5, kodeKegiatan: "522131", grupKode: "522131", realisasi: 9950000, noSpm: 129, status: "LENGKAP" },
+    { no: 6, kodeKegiatan: "522131", grupKode: "522131", realisasi: 9950000, noSpm: 217, status: "belum ada daftar hadir dan BA kemajuan pekerjaan" },
+  ],
+  CKPS: [
+    { no: 1, kodeKegiatan: "521211", grupKode: "521211", realisasi: 7001006, noSpm: 109, status: "LENGKAP" },
+    { no: 2, kodeKegiatan: "521211", grupKode: "521211", realisasi: 3210325, noSpm: 122, status: "LENGKAP" },
+    { no: 3, kodeKegiatan: "521211", grupKode: "521211", realisasi: 1259000, noSpm: 170, status: "LENGKAP" },
+    { no: 4, kodeKegiatan: "521211", grupKode: "521211", realisasi: 1320000, noSpm: 240, status: "LENGKAP" },
+    { no: 5, kodeKegiatan: "521211", grupKode: "521211", realisasi: 6823697, noSpm: 390, status: "LENGKAP" },
+    { no: 6, kodeKegiatan: "522131", grupKode: "522131", realisasi: 9950000, noSpm: 147, status: "diupload" },
+  ],
+  UPTU: [
+    { no: 1, kodeKegiatan: "521211", grupKode: "521211", realisasi: 2792869, noSpm: 229, status: "LENGKAP" },
+    { no: 2, kodeKegiatan: "521211", grupKode: "521211", realisasi: 4095900, noSpm: 333, status: "LENGKAP" },
+    { no: 3, kodeKegiatan: "521211", grupKode: "521211", realisasi: 1650000, noSpm: 397, status: "LENGKAP" },
+    { no: 4, kodeKegiatan: "524111", grupKode: "524111", realisasi: 2922648, noSpm: 378, status: "LENGKAP" },
+    { no: 5, kodeKegiatan: "524111", grupKode: "524111", realisasi: 2059080, noSpm: 379, status: "LENGKAP" },
+    { no: 6, kodeKegiatan: "524111", grupKode: "524111", realisasi: 2270000, noSpm: 393, status: "LENGKAP" },
   ],
 };
 

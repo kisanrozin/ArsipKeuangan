@@ -74,4 +74,32 @@ export function dengarKegiatanTambahan(fn) {
   };
 }
 
+/* ── Rekap realisasi per bulan dari data tambahan ─────────────
+   Dipakai Dashboard ("Realisasi Data Per Bulan") supaya angka hasil
+   impor folder langsung ikut ter-update. Data lama yang hanya punya
+   `tanggal` + `realisasi` tetap didukung.
+
+   Bentuk hasil: { "2026-01": 1250000, "2026-02": 750000, ... } */
+export function rekapRealisasiTambahan(daftar) {
+  const perBulan = {};
+  (daftar || []).forEach((t) => {
+    if (!t) return;
+
+    const peta = t.realisasiPerBulan;
+    if (peta && typeof peta === "object" && Object.keys(peta).length) {
+      Object.entries(peta).forEach(([ym, nilai]) => {
+        if (!/^\d{4}-\d{2}$/.test(ym)) return;
+        perBulan[ym] = (perBulan[ym] || 0) + (Number(nilai) || 0);
+      });
+      return;
+    }
+
+    const ym = t.tanggal ? String(t.tanggal).slice(0, 7) : "";
+    if (/^\d{4}-\d{2}$/.test(ym) && Number(t.realisasi)) {
+      perBulan[ym] = (perBulan[ym] || 0) + Number(t.realisasi);
+    }
+  });
+  return perBulan;
+}
+
 export { KUNCI as KUNCI_KEGIATAN_TAMBAHAN };

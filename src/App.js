@@ -9,6 +9,7 @@ import ProsesBisnis from "./components/ProsesBisnis";
 import TamuRingkasan from "./components/TamuRingkasan";
 import SplashScreen from "./components/SplashScreen";
 import { PeranProvider, usePeran } from "./context/PeranContext";
+import { praMuatKegiatan } from "./data/cacheKegiatan";
 
 /* Scroll tanpa animasi.
    `App.css` memakai `html { scroll-behavior: smooth }`, sehingga
@@ -29,11 +30,35 @@ function IsiApp() {
      benar-benar masuk. */
   const [splashTutup, setSplashTutup] = React.useState(false);
 
+  /* Pra-muat data kegiatan Google Drive di latar belakang begitu pengguna
+     masuk ke aplikasi, sehingga saat membuka tab "Data Kegiatan",
+     datanya sudah siap dan langsung tampil tanpa menunggu lama. */
+  React.useEffect(() => {
+    if (!splashTutup) return;
+    const t = setTimeout(() => {
+      praMuatKegiatan();
+    }, 400);
+    return () => clearTimeout(t);
+  }, [splashTutup]);
+
   /* Tamu mulai dari halaman ringkasan (baca-saja); admin mulai dari
      dashboard. `activePage` hanya berlaku untuk peran yang sedang aktif. */
   const [activePage, setActivePage] = React.useState(
     isAdmin ? "dashboard" : "tamu"
   );
+  /* Filter periode yang dipilih di beranda ("Realisasi Data Per Bulan")
+     diteruskan ke halaman Data Kegiatan, supaya keduanya menunjuk
+     tahun-bulan yang sama. Nilai awal `null` = belum ada pilihan dari
+     beranda, jadi Data Kegiatan tetap tampil tanpa filter bulan. */
+  const [filterKegiatan, setFilterKegiatan] = React.useState(null);
+  const teruskanFilterKegiatan = React.useCallback((periode) => {
+    if (!periode) return;
+    setFilterKegiatan({
+      tahun: String(periode.tahun || ""),
+      bulan: String(periode.bulan || ""),
+      waktu: Date.now(),
+    });
+  }, []);
   /* Posisi scroll DICATAT per halaman, jadi:
      - pindah halaman tidak lempar ke titik atas
      - kembali ke halaman yang sama kembali ke posisi yang sama
@@ -45,6 +70,9 @@ function IsiApp() {
   const gantiPeran = React.useCallback(
     (jadiAdmin) => {
       posisiPerHalaman.current = {};
+      /* Filter beranda milik sesi peran sebelumnya — jangan dibawa
+         ke peran lain. */
+      setFilterKegiatan(null);
       setPeran(jadiAdmin ? "admin" : "tamu");
       setActivePage(jadiAdmin ? "dashboard" : "tamu");
       scrollKePosisi(0);
@@ -134,26 +162,38 @@ function IsiApp() {
       switch (activePage) {
         case "data-kegiatan":
         case "kebutuhan":
-          return <DataKegiatan />;
+          return <DataKegiatan periode={filterKegiatan} />;
         case "proses-bisnis":
           return <ProsesBisnis />;
         case "histori-dipa":
-          return <HistoriRevisiDipa setActivePage={gantiPage} />;
+          return <HistoriRevisiDipa setActivePage={gantiPage} periode={filterKegiatan} />;
         default:
           return <TamuRingkasan setActivePage={gantiPage} />;
       }
     }
 
     switch (activePage) {
-      case "dashboard":     return <Dashboard setActivePage={gantiPage} />;
-      case "histori-dipa": return <HistoriRevisiDipa setActivePage={gantiPage} />;
-      case "kebutuhan":     return <DataKegiatan />;
-      case "data-kegiatan":  return <DataKegiatan />;
+      case "dashboard":     return (
+        <Dashboard
+          setActivePage={gantiPage}
+          onFilterChange={teruskanFilterKegiatan}
+          periode={filterKegiatan}
+        />
+      );
+      case "histori-dipa": return <HistoriRevisiDipa setActivePage={gantiPage} periode={filterKegiatan} />;
+      case "kebutuhan":     return <DataKegiatan periode={filterKegiatan} />;
+      case "data-kegiatan":  return <DataKegiatan periode={filterKegiatan} />;
       case "proses-bisnis":  return <ProsesBisnis />;
       case "dokumen":       return <JenisDokumen />;
       case "dipa":          return <JenisDokumen />;
       case "rkks":          return <JenisDokumen />;
-      default:              return <Dashboard setActivePage={gantiPage} />;
+      default:              return (
+        <Dashboard
+          setActivePage={gantiPage}
+          onFilterChange={teruskanFilterKegiatan}
+          periode={filterKegiatan}
+        />
+      );
     }
   };
 

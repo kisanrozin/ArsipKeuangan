@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { PAGU_KEGIATAN, TAHUN_ANGGARAN_AKTIF, bidangDariKegiatan } from "../data/masterData";
+import { TAHUN_ANGGARAN_AKTIF } from "../data/masterData";
+import { ambilLedgerSpm, kunciKode, nomorBulanDariId } from "../data/ledgerSpm";
 import {
   SPJ_FOLDER_ID,
   API_KEY,
-  SHEET_TAB_REKAP,
-  ambilRekapKumulatif,
-  bacaPaguPerBidang,
   parseBerkasSpm,
   rekapPerBulanDariBaris,
   terbitkanPerBulanDrive,
@@ -18,10 +16,22 @@ import {
   rekapRealisasiSpm,
 } from "../data/rekapSpm";
 import {
+  bacaKegiatanTambahan,
   dengarKegiatanTambahan,
   tulisKegiatanTambahan,
 } from "../data/KegiatanTambahan";
+import {
+  bacaCacheKegiatan,
+  cacheMasihSegar,
+  muatDataKegiatanDariDrive,
+} from "../data/cacheKegiatan";
 import { usePeran } from "../context/PeranContext";
+import { parseNamaFolder } from "../data/namaFolderKegiatan";
+import {
+  ambilEntriDrop,
+  analisaDropKegiatan,
+  gabungImporKeDaftar,
+} from "../data/imporFolder";
 
 /* ══════════════════════════════════════════════════════════════
    DATA KEGIATAN & ANGGARAN
@@ -34,12 +44,14 @@ const FOLDER_MIME = "application/vnd.google-apps.folder";
 
 /* ── Sumber REALISASI dari spreadsheet (rekap kumulatif) ───────
    Kolom "Realisasi" pada tabel ini diisi dari spreadsheet rekap
-   kumulatif (bukan dari penjumlahan nama berkas PDF), sehingga
+   kumulatif (bukan dari penjumlahahan nama berkas PDF), sehingga
    selalu sama dengan data Excel terbaru di Drive.
-   Tab dipakai: `SHEET_TAB_REKAP`. Ganti bila spreadsheet memakai
-   tab lain (nama tab = judul sheet di Google Sheets).
+   Tab yang dipakai = tab rekap TERBARU yang ada di spreadsheet,
+   dan namanya dibaca otomatis dari daftar tab (src/data/daftarSheet.js).
+   Jadi begitu tab baru (mis. "JAN SD OKTOBER") dibuat di Drive,
+   tabel ini ikut memakai angka tab itu tanpa perlu ubah kode.
    Pembacaan tabnya orang yang sama dengan Dashboard, lewat
-   src/data/rekapKegiatan.js → ambilRekapKumulatif().          */
+   src/data/rekapKegiatan.js → ambilRekapKumulatifTerbaru().   */
 
 /* ── Sumber PAGU & PERSENTASE ─────────────────────────────────
    Pagu per KEGIATAN tidak tersedia di sumber mana pun (hanya ada
@@ -83,12 +95,6 @@ function hitungPersen(realisasi, pagu) {
   return ((Number(realisasi) || 0) / p) * 100;
 }
 
-function persenColor(p) {
-  if (p >= 100) return "#16a34a";
-  if (p >= 50) return "#d97706";
-  return "#dc2626";
-}
-
 /* "2026-07-28" → "28/07/2026".
    Hanya tanggal kalender yang benar-benar ada yang ditampilkan;
    bagian tanggal dari string ISO (mis. "2026-07-28T…" dari Drive)
@@ -125,47 +131,88 @@ function tanggalHariIni() {
   return `${d.getFullYear()}-${bulan}-${hari}`;
 }
 
-function formatBytes(bytes) {
-  const b = Number(bytes) || 0;
-  if (b <= 0) return "—";
-  if (b >= 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(2)} Mb`;
-  if (b >= 1024) return `${(b / 1024).toFixed(2)} Kb`;
-  return `${b} B`;
+/* Kunci unik satu berkas (path folder + nama) — dipakai untuk mencocokkan
+   hasil unggahan Drive dengan metadata yang sudah tersimpan. */
+function kunciPathBerkas(path, nama) {
+  return [...(path || []), nama].join("/");
 }
 
-/* ── Parse nama folder kegiatan di Drive ────────────────────────
-   Contoh nama folder:
-     "7769.AFA.001.100.A.Peny. Kurmod Pelatihan SDA (...)"  → kode + nama
-     "7770.EBA.962.100.A Tata Kelola Penyelenggaraan Kegiatan" → kode + nama
-   Kode selalu berupa rangkaian segmen: 7769 . EAF . 001 . 100 . A
-   ---------------------------------------------------------------- */
-const SEGMENT_KODE = /^(?:\d{4}|\d{3}[A-Z]?|[A-Z]\d{2}|\d{1,3}|[A-Z]{1,3})$/;
+/* Gabungkan dua daftar berkas tanpa menggandakan SPM yang sama. */
+function gabungBerkasUnik(a = [], b = []) {
+  const peta = new Map();
+  [...a, ...b].forEach((x) => {
+    if (!x) return;
+    const spm = x.spm;
+    const kunci = spm
+      ? `${spm.noSpm}|${spm.rekening}|${spm.nilai}|${spm.tanggal}`
+      : `${x.name || ""}|${(x.path || []).join("/")}`;
+    if (!peta.has(kunci)) peta.set(kunci, x);
+  });
+  return [...peta.values()];
+}
 
-function parseNamaFolder(namaFolder) {
-  const segments = String(namaFolder || "").split(".");
-  const kodeParts = [];
-  let i = 0; 
-  for (; i < segments.length; i += 1) {
-    const seg = segments[i];
-    if (SEGMENT_KODE.test(seg)) {
-      kodeParts.push(seg);
-      continue;
-    }
-    // Segmen berisi spasi → bagian awal bisa jadi kode terakhir, sisanya nama.
-    const spasi = seg.match(/^([A-Za-z0-9]{1,4})\s+(.*)$/);
-    if (spasi && SEGMENT_KODE.test(spasi[1].toUpperCase())) {
-      kodeParts.push(spasi[1].toUpperCase());
-      return { kode: kodeParts.join("."), nama: spasi[2].trim() };
-    }
-    break;
+/* Bangun daftar rekening (bentuk yang dipahami rekapRekening) dari
+   berkas SPM hasil impor folder. */
+function rekeningDariBerkas(berkas = []) {
+  const peta = new Map();
+  (berkas || []).forEach((b) => {
+    const kode = b && b.spm ? b.spm.rekening : b && b.rekening;
+    if (!kode) return;
+    if (!peta.has(kode)) peta.set(kode, { kode, jumlah: 0 });
+    peta.get(kode).jumlah += 1;
+  });
+  return [...peta.values()];
+}
+
+/* Waktu simpan cache (ms) → teks singkat: "baru saja", "3 mnt lalu". */
+function waktuRelatif(ms) {
+  const t = Number(ms) || 0;
+  if (t <= 0) return "";
+  const detik = Math.floor((Date.now() - t) / 1000);
+  if (detik < 60) return "baru saja";
+  const menit = Math.floor(detik / 60);
+  if (menit < 60) return `${menit} mnt lalu`;
+  const jam = Math.floor(menit / 60);
+  if (jam < 24) return `${jam} jam lalu`;
+  return `${Math.floor(jam / 24)} hari lalu`;
+}
+
+/* "2026-07" → "Juli 2026"; dipakai untuk chip & keterangan filter bulan. */
+const NAMA_BULAN_ID = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+];
+
+function labelBulan(ym) {
+  const cocok = String(ym || "").match(/^(\d{4})-(\d{2})$/);
+  if (!cocok) return ym || "—";
+  const bulan = Number(cocok[2]);
+  if (bulan < 1 || bulan > 12) return ym;
+  return `${NAMA_BULAN_ID[bulan - 1]} ${cocok[1]}`;
+}
+
+/* Label periode dari rentang filter: "Januari 2026 – Juni 2026" bila
+   bulan awal ≠ akhir, atau label bulan tunggal bila sama. Cocok dengan
+   angka realisasi kumulatif yang berlaku s.d. bulan "sampai". */
+function labelPeriodeBulan(dari, sampai) {
+  if (dari && sampai && dari !== sampai) {
+    return `${labelBulan(dari)} – ${labelBulan(sampai)}`;
   }
+  return labelBulan(dari || sampai);
+}
+
+/* Periode dari beranda ({ tahun, bulan: "juli" }) → rentang kumulatif
+   Januari s.d. bulan terpilih: { dari: "2026-01", sampai: "2026-07" }.
+   Angka "Realisasi Bulan" di beranda memang kumulatif sejak Januari,
+   jadi filter di Data Kegiatan memakai rentang yang sama (bukan hanya
+   bulan itu saja). Nilai kosong/tidak valid → null. */
+function rentangDariPeriode(periode) {
+  const tahun = String((periode && periode.tahun) || "").trim();
+  const nomor = nomorBulanDariId(periode && periode.bulan);
+  if (!/^\d{4}$/.test(tahun) || !nomor) return null;
   return {
-    kode: kodeParts.join("."),
-    nama: segments
-      .slice(i)
-      .join(".")
-      .replace(/^[\s.-]+/, "")
-      .trim(),
+    dari: `${tahun}-01`,
+    sampai: `${tahun}-${String(nomor).padStart(2, "0")}`,
   };
 }
 
@@ -181,10 +228,13 @@ async function listAnak(folderId) {
         "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)",
       pageSize: "200",
       key: API_KEY,
+      /* Cache-buster: pembacaan harus selalu segar (realtime). */
+      t: String(Date.now()),
     });
     if (pageToken) params.set("pageToken", pageToken);
     const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?${params.toString()}`
+      `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+      { cache: "no-store" }
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
@@ -199,26 +249,48 @@ function namaRekening(kode) {
   return NAMA_REKENING[String(kode || "").trim()] || `Rekening ${kode || "—"}`;
 }
 
-/* ── Ambil rekap kumulatif dari spreadsheet (live, GVIZ) ──────
-   Pembacaan tabnya dilakukan src/data/rekapKegiatan.js (sama
-   dengan yang dipakai Dashboard), lalu diterjemahkan ke bentuk
-   yang dipakai tabel di halaman ini:
-     { totalRekap, perRekening: Map, perPic: Map, baris }       */
-async function ambilRekapKumulatifSpreadsheet() {
-  const rekap = await ambilRekapKumulatif(SHEET_TAB_REKAP);
-  if (!rekap) return null;
+/* ── Pencarian teks (kode & nama kegiatan/akun belanja) ────────
+   Titik, spasi, dan tanda baca diabaikan supaya pengguna tidak perlu
+   menulis format kode persis. Contoh: "7769.AFA", "7769 afa", dan
+   "7769afa" semuanya menemukan kode yang sama. Setiap kata kunci
+   harus ada pada kode/nama (urutan bebas), jadi "afa 7769" juga
+   cocok. KODE LENGKAP (kode kegiatan + kode akun belanja) seperti
+   "7769.AFA.001.100.A.521211" juga dicocokkan. Semua baris —
+   termasuk data hasil "+ Tambah Data" — memakai pencocokan ini. */
+function normalCari(teks) {
+  return String(teks || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
 
-  const perPic = new Map();
-  rekap.rekening.forEach((v) => {
-    if (v.pic) perPic.set(v.pic, (perPic.get(v.pic) || 0) + (v.realisasi || 0));
+function cocokCari(kueri, ...nilai) {
+  const kata = normalCari(kueri).split(" ").filter(Boolean);
+  if (kata.length === 0) return true;
+  const teks = normalCari(nilai.filter(Boolean).join(" "));
+  const padat = teks.replace(/ /g, "");
+  return kata.every((k) => teks.includes(k) || padat.includes(k));
+}
+
+/* Kode & nama rekening (kode akun belanja) milik sebuah baris —
+   dipakai agar pencarian juga menemukan kegiatan lewat kode belanja. */
+function nilaiRekeningUntukCari(r) {
+  const nilai = [];
+  (r && r.rekening ? r.rekening : []).forEach((k) => {
+    if (k && typeof k === "object") {
+      nilai.push(k.kode || "", k.nama || "");
+    } else {
+      nilai.push(k || "", namaRekening(k));
+    }
   });
+  return nilai;
+}
 
-  return {
-    totalRekap: rekap.total,
-    perRekening: rekap.rekening,
-    perPic,
-    baris: rekap.jumlahRekening,
-  };
+/* Ambil ID folder Drive dari tautan webViewLink
+   (…/drive/folders/<ID>) — dipakai saat cache lama belum menyimpan id. */
+function idFolderDariLink(url) {
+  const m = String(url || "").match(/\/folders\/([A-Za-z0-9_-]+)/);
+  return m ? m[1] : "";
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -445,27 +517,16 @@ async function bacaPesanDrive(res) {
   }
 }
 
-/* Jalankan pekerjaan dengan batas konkurensi ( Drive API dibatasi kuota ) */
-async function jalankanKolom(items, worker, concurrency = 4) {
-  const antrean = items.map((item, idx) => ({ item, idx }));
-  const pekerja = Array.from(
-    { length: Math.max(1, Math.min(concurrency, antrean.length)) },
-    async () => {
-      while (antrean.length > 0) {
-        const ambil = antrean.shift();
-        await worker(ambil.item, ambil.idx);
-      }
-    }
-  );
-  await Promise.all(pekerja);
-}
+/* ── Pekerjaan dengan batas konkurensi (jalankanKolom) sekarang
+   berada di src/data/cacheKegiatan.js karena penelusuran Drive
+   dipindahkan ke modul itu. */
 
 /* ══════════════════════════════════════════════════════════════
    STRUKTUR HIERARKIS (mengikuti diagram alurdigital)
      7769                        → Kode Induk        (program)
-      └ 7769.AFA                 → Kode Cabang       (kegiatan)
-         └ 7769.AFA.001.100.A    → Kode Kegiatan     (output)
-            └ 521211             → Kode Akun Belanja (rekening)
+     └ 7769.AFA                 → Kode Cabang       (kegiatan)
+        └ 7769.AFA.001.100.A    → Kode Kegiatan     (output)
+           └ 521211             → Kode Akun Belanja (rekening)
    ══════════════════════════════════════════════════════════════ */
 const LABEL_LEVEL = {
   induk: "Kode Induk",
@@ -492,6 +553,7 @@ function rekapRekening(r, rekapSheetData) {
         realisasi: 0,
         tanggal: null,
         link: null,
+        folderId: null,
       });
     }
     return peta.get(k);
@@ -502,6 +564,7 @@ function rekapRekening(r, rekapSheetData) {
     if (!n) return;
     n.jumlahBerkas += k.jumlah || 0;
     n.link = k.link || null;
+    n.folderId = k.id || n.folderId;
   });
   (r.berkas || []).forEach((b) => {
     const n = ambil(b.spm.rekening);
@@ -562,13 +625,17 @@ function nodeBaru(key, kode, tipe, depth) {
     berkas: [],
     lainnya: [],
     salinan: [],
+    /* Folder kode akun belanja di Drive (untuk kegiatan). */
+    rekening: [],
+    /* ID folder kegiatan / rekening di Drive (untuk muat realtime). */
+    folderId: "",
     link: null,
     lokal: false,
   };
 }
 
 /* Bangun pohon hierarkis dari baris kegiatan (satu daun = satu kegiatan) */
-function bangunPohon(baris, rekapSheetData) {
+function bangunPohon(baris, rekapSheetData, nilaiRealisasi) {
   const akar = [];
   const indeks = new Map();
 
@@ -610,18 +677,30 @@ function bangunPohon(baris, rekapSheetData) {
     } else {
       parent.pagu += r.pagu || 0;
     }
-    parent.realisasi += r.realisasi || 0;
+    /* Realisasi: bila kegiatan ini ada di LEDGER spreadsheet (tab rekap
+       SPM kumulatif), angka yang dipakai adalah total SPM pada ledger
+       itu — sumber yang sama dengan bukti laporan SPM, sehingga kolom
+       Realisasi dan daftar bukti selalu cocok. */
+    const nilai =
+      typeof nilaiRealisasi === "function"
+        ? nilaiRealisasi(r)
+        : r.realisasi || 0;
+    parent.realisasi += Number(nilai) || 0;
     parent.realisasiBerkas += r.realisasiBerkas || 0;
-    parent.sumberRealisasi =
-      parent.sumberRealisasi === "Spreadsheet" && r.sumberRealisasi === "Spreadsheet"
-        ? "Spreadsheet"
-        : r.sumberRealisasi || parent.sumberRealisasi;
+    parent.sumberRealisasi = r.realisasiPerBulan
+      ? "Impor folder"
+      : r.sumberRealisasi || parent.sumberRealisasi;
     parent.jumlahBerkas += r.jumlahBerkas || 0;
     parent.link = r.link || parent.link;
+    /* ID folder kegiatan di Drive — untuk memuat berkas secara realtime. */
+    parent.folderId = parent.folderId || r.id || "";
     parent.lokal = parent.lokal || r.lokal;
     parent.berkas = parent.berkas.concat(r.berkas || []);
     parent.lainnya = parent.lainnya.concat(r.lainnya || []);
     parent.salinan = parent.salinan.concat(r.salinan || []);
+    /* Folder kode akun belanja di Drive (folder anak kegiatan) — dipakai
+       modal bukti laporan SPM untuk memecah bukti per kode belanja. */
+    parent.rekening = r.rekening || parent.rekening || [];
     if (r.tanggal && (!parent.tanggal || r.tanggal > parent.tanggal)) {
       parent.tanggal = r.tanggal;
     }
@@ -631,6 +710,10 @@ function bangunPohon(baris, rekapSheetData) {
       parent.children.push({
         ...nodeBaru(`${parent.key}::${k.kode}`, k.kode, "akun", parent.depth + 1),
         nama: k.nama,
+        /* Kode Kegiatan induknya — dipakai untuk mencocokkan baris
+           ledger (sumber badge 📎 "N berkas") saat memecahnya ke
+           sini (baris akun belanja). */
+        induk: parent.kode,
         pagu: null, // pagu hanya tersedia per kegiatan
         basisPagu: r.pagu,
         realisasi: k.realisasi,
@@ -642,6 +725,7 @@ function bangunPohon(baris, rekapSheetData) {
         jumlahUnik: k.jumlahUnik,
         jumlahSalinan: k.salinan,
         link: k.link,
+        folderId: k.folderId || idFolderDariLink(k.link),
         berkas: (r.berkas || []).filter((b) => b.spm.rekening === k.kode),
         lainnya: (r.lainnya || []).filter((b) => b.rekening === k.kode),
         salinan: (r.salinan || []).filter((b) => b.spm.rekening === k.kode),
@@ -713,17 +797,43 @@ function flattenPohon(akar, isOpen) {
 }
 
 /* ══════════════════════════════════════════════════════════════ */
-export default function DataKegiatan() {
+export default function DataKegiatan({ periode = null }) {
   /* Mode tamu → tabel tetap tampil, tetapi semua kontrol input
      (tambah data, hapus baris) disembunyikan. */
   const { isAdmin } = usePeran();
-  const [rows, setRows] = useState([]);
-  const [rekapSheet, setRekapSheet] = useState(null);
+
+  /* ── Tampilkan cache dulu agar tabel langsung terlihat ────────
+     Hasil pembacaan Drive terakhir disimpan di localStorage
+     (src/data/cacheKegiatan.js). Saat halaman dibuka, isi cache
+     LANGSUNG dipakai sebagai data awal, jadi tabel tidak perlu
+     menunggu penelusuran Drive. Penyegaran dari Drive tetap
+     berjalan di belakang layar (muatData) dan mengganti isinya
+     begitu selesai. */
+  const cacheAwalRef = useRef(null);
+  if (cacheAwalRef.current === null) cacheAwalRef.current = bacaCacheKegiatan();
+  const adaCache = !!(cacheAwalRef.current && cacheAwalRef.current.rows && cacheAwalRef.current.rows.length);
+
+  const [rows, setRows] = useState(() =>
+    adaCache ? cacheAwalRef.current.rows : []
+  );
+  /* Ref baris terkini — dipakai di dalam muatData untuk menyimpan
+     cache / mengecek keberadaan data tanpa memakai setRows sebagai
+     efek samping (aman di React StrictMode). */
+  const rowsRef = useRef(rows);
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+  const [rekapSheet, setRekapSheet] = useState(() =>
+    adaCache ? cacheAwalRef.current.rekapSheet : null
+  );
   const rekapSheetData = rekapSheet?.data ?? null;
   const rekapRef = useRef(null);
+  useEffect(() => {
+    if (rekapSheet?.data) rekapRef.current = rekapSheet.data;
+  }, [rekapSheet]);
   /* Pagu per bidang (SDA/CKPS/UPTU) dari tab pertama spreadsheet rekap —
      dipakai mengisi kolom Pagu & Persentase tiap kegiatan. */
-  const paguBidangRef = useRef(null);
+  const paguBidangRef = useRef(adaCache ? cacheAwalRef.current.paguBidang : null);
 
   /* Realisasi SPM dari spreadsheet "Rekap SPM kumulatif per bulan"
      di folder SPJ Drive — dibaca live lewat GVIZ, jadi angkanya
@@ -731,33 +841,181 @@ export default function DataKegiatan() {
   const [rekapSpm, setRekapSpm] = useState(null);
   useEffect(() => dengarRekapSpm(setRekapSpm), []);
 
-  const [loading, setLoading] = useState(true);
+  /* `loading` hanya true bila belum ada cache sama sekali — dengan
+     cache, tabel langsung tampil dan status diubah menjadi
+     "menyegarkan" (progress berjalan) alih-alih layar kosong. */
+  const [loading, setLoading] = useState(!adaCache);
+  const [menyegarkan, setMenyegarkan] = useState(false);
+  const [cacheDipakai, setCacheDipakai] = useState(adaCache);
+  const [terakhirMuat, setTerakhirMuat] = useState(
+    adaCache ? cacheAwalRef.current.disimpan || 0 : 0
+  );
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
 
   // Filter: draft (isian user) → applied (dipakai tabel)
-  const [draft, setDraft] = useState({ cari: "", dari: "", sampai: "" });
-  const [applied, setApplied] = useState({ cari: "", dari: "", sampai: "" });
+  /* Filter periode yang dipilih di beranda ("Realisasi Data Per Bulan")
+     dipakai sebagai nilai awal filter bulan di halaman ini, lalu tetap
+     diperbarui bila pengguna mengganti filter tahun/bulan di beranda.
+     Rentangnya kumulatif: Januari s.d. bulan yang dipilih, sama seperti
+     angka realisasi di beranda. */
+  const rentangBeranda = useMemo(
+    () => rentangDariPeriode(periode),
+    [periode]
+  );
+  const dariBeranda = rentangBeranda ? rentangBeranda.dari : "";
+  const sampaiBeranda = rentangBeranda ? rentangBeranda.sampai : "";
+  const [draft, setDraft] = useState(() => ({
+    cari: "",
+    dari: dariBeranda,
+    sampai: sampaiBeranda,
+  }));
+  const [applied, setApplied] = useState(() => ({
+    cari: "",
+    dari: dariBeranda,
+    sampai: sampaiBeranda,
+  }));
 
-  const [modalBerkas, setModalBerkas] = useState(null);
+  /* Periode dari beranda berubah → ganti rentang bulan (Januari s.d.
+     bulan terpilih) tanpa menghapus kata kunci pencarian. */
+  useEffect(() => {
+    if (!dariBeranda && !sampaiBeranda) return;
+    setDraft((d) =>
+      d.dari === dariBeranda && d.sampai === sampaiBeranda
+        ? d
+        : { ...d, dari: dariBeranda, sampai: sampaiBeranda }
+    );
+    setApplied((a) =>
+      a.dari === dariBeranda && a.sampai === sampaiBeranda
+        ? a
+        : { ...a, dari: dariBeranda, sampai: sampaiBeranda }
+    );
+  }, [dariBeranda, sampaiBeranda]);
+
   const [modalTambah, setModalTambah] = useState(false);
+  /* Modal daftar bukti laporan SPM (tombol ringkas di kolom Bukti Kerja
+     & tombol ringkasan di panel atas). */
+  const [modalSpm, setModalSpm] = useState(null);
+  /* Status pemuatan ulang REALTIME berkas SPM langsung dari Google Drive
+     saat modal bukti dibuka — supaya daftar berkas selalu lengkap. */
+  const [modalSpmLive, setModalSpmLive] = useState(null);
+
+  /* Muat ulang berkas SPM langsung dari folder Drive (bukan dari cache).
+     `folders`: [{ kode, id?, link? }]; `liveKey` memastikan hasil hanya
+     diterapkan ke modal yang masih terbuka. */
+  const muatBuktiSpmLive = useCallback(async (liveKey, folders) => {
+    const daftarFolder = (folders || []).filter((f) => f && (f.id || f.link));
+    if (!liveKey || daftarFolder.length === 0) {
+      setModalSpmLive({ memuat: false, galat: "", waktu: null });
+      return;
+    }
+    setModalSpmLive({ memuat: true, galat: "", waktu: null });
+    try {
+      const hasil = await Promise.all(
+        daftarFolder.map(async (f) => {
+          const id = f.id || idFolderDariLink(f.link);
+          if (!id) return { rek: String(f.kode || "").trim(), files: [] };
+          const isi = await listAnak(id);
+          return {
+            rek: String(f.kode || "").trim(),
+            files: isi.filter((x) => x.mimeType !== FOLDER_MIME),
+          };
+        })
+      );
+      const bertanda = [];
+      const lainnya = [];
+      hasil.forEach(({ rek, files }) => {
+        files.forEach((file) => {
+          const spm = parseBerkasSpm(file.name, rek);
+          if (spm) bertanda.push({ ...file, spm, rekening: rek });
+          else lainnya.push({ ...file, rekening: rek });
+        });
+      });
+      const sudah = new Set();
+      const unik = [];
+      let salinan = 0;
+      bertanda.forEach((b) => {
+        const kunci = `${b.spm.noSpm}|${b.spm.rekening}|${b.spm.nilai}`;
+        if (sudah.has(kunci)) {
+          salinan += 1;
+          return;
+        }
+        sudah.add(kunci);
+        unik.push(b);
+      });
+      unik.sort((a, b) =>
+        String(a.spm.tanggal || "").localeCompare(String(b.spm.tanggal || ""))
+      );
+      const pdf = unik
+        .filter((b) => b.spm.tanggal)
+        .map((b) => ({
+          no: b.spm.noSpm,
+          rek: b.spm.rekening,
+          nilai: b.spm.nilai,
+          tgl: b.spm.tanggal,
+          nama: b.name,
+          link: b.webViewLink,
+        }));
+      const pdfTanpaTanggal = unik.filter((b) => !b.spm.tanggal);
+      setModalSpm((m) => {
+        if (!m || m.liveKey !== liveKey) return m;
+        return {
+          ...m,
+          pdf,
+          pdfTanpaTanggal,
+          pdfLainnya: lainnya,
+          /* Bila tidak ada baris spreadsheet, total diambil dari PDF
+             supaya ringkasan nilai tetap tampil. */
+          total:
+            m.baris && m.baris.length
+              ? m.total
+              : pdf.reduce((s, b) => s + (b.nilai || 0), 0),
+        };
+      });
+      setModalSpmLive({
+        memuat: false,
+        galat: "",
+        waktu: Date.now(),
+        jumlahBerkas: pdf.length + pdfTanpaTanggal.length + lainnya.length,
+        salinan,
+      });
+    } catch (e) {
+      setModalSpmLive({
+        memuat: false,
+        galat: String((e && e.message) || e),
+        waktu: null,
+      });
+    }
+  }, []);
+
+  /* Saat modal ditutup, bersihkan status realtime. */
+  useEffect(() => {
+    if (!modalSpm) setModalSpmLive(null);
+  }, [modalSpm]);
   const [formTambah, setFormTambah] = useState({
     segmen: [], // diisi satu per satu: ["7769","AFA","001","100","A"]
     nama: "",
-    pagu: "",
-    realisasi: "",
   });
-  const [fileTambah, setFileTambah] = useState(null);
+  /* Hasil pembacaan folder/berkas yang dijatuhkan di modal Tambah Data:
+     kode/nama kegiatan, daftar berkas, dan realisasi per bulan. */
+  const [analisaTambah, setAnalisaTambah] = useState(null);
+  const [menganalisaTambah, setMenganalisaTambah] = useState(false);
+  /* Status area drag & drop pada modal "Tambah Data" (khusus admin):
+     sedang ada berkas yang ditarik di atas area, dan pesan kesalahan. */
+  const [dragTambah, setDragTambah] = useState(false);
+  const [pesanFileTambah, setPesanFileTambah] = useState("");
   const [subFolderRekening, setSubFolderRekening] = useState("");
   const [daftarRekening, setDaftarRekening] = useState([]);
   const [statusUpload, setStatusUpload] = useState(null);
   const [santaiUpload, setSantaiUpload] = useState(false);
   const [tambahan, setTambahan] = useState([]);
 
-  // Pohon hierarkis: node mana yang sedang dibuka
+  // Pohon hierarkis: node mana yang sedang dibuka.
+  // Default SEMUA TERBUKA supaya baris Kode Kegiatan beserta bukti
+  // laporan SPM-nya langsung terlihat tanpa perlu klik induk/cabang.
   const [terbuka, setTerbuka] = useState({});
-  const [semuaBuka, setSemuaBuka] = useState(false);
+  const [semuaBuka, setSemuaBuka] = useState(true);
 
   const isOpen = useCallback(
     (node) =>
@@ -765,7 +1023,7 @@ export default function DataKegiatan() {
         ? true
         : terbuka[node.key] !== undefined
         ? terbuka[node.key]
-        : node.depth < 1, // default: kode induk terbuka, sisanya tertutup
+        : node.depth < 1,
     [terbuka, semuaBuka]
   );
 
@@ -788,225 +1046,85 @@ export default function DataKegiatan() {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
-  /* ── Muat data kegiatan dari Drive (2 tahap) ──────────────── */
-  const muatData = useCallback(async () => {
-    setLoading(true);
+  /* ── Muat data kegiatan dari Drive (2 tahap) ────────────────
+     Bila cache sudah terisi, tabel LANGSUNG tampil seketika (0 detik);
+     statusnya "menyegarkan" di latar belakang tanpa mengosongkan tabel.
+     Bila belum ada cache, Tahap 1 langsung menampilkan kegiatan dalam
+     ~1 detik, lalu Tahap 2 melengkapi rincian rekening & berkas. */
+  const muatData = useCallback(async (paksa = false) => {
     setError(null);
     setProgress(0);
+    /* Hanya tampilkan status memuat (layar kosong) bila belum ada
+       data sama sekali — kalau cache sudah mengisi tabel, pengguna
+       langsung melihat tabel. */
+    if (rowsRef.current.length === 0) setLoading(true);
+    setMenyegarkan(true);
+
     try {
-      // Tahap 0 — rekap kumulatif dari spreadsheet (sumber angka Realisasi).
-      try {
-        const rekap = await ambilRekapKumulatifSpreadsheet();
-        rekapRef.current = rekap;
-        setRekapSheet(
-          rekap
-            ? {
-                total: rekap.totalRekap,
-                rekening: rekap.perRekening.size,
-                data: rekap,
-              }
-            : null
-        );
-      } catch (e) {
-        console.warn("Gagal membaca rekap kumulatif spreadsheet:", e);
-        rekapRef.current = null;
-        setRekapSheet(null);
-      }
-
-      // Tahap 0a — Pagu per bidang (resume SP2D, tab pertama spreadsheet).
-      // Pagu hanya tersedia per bidang, jadi tiap kegiatan memakai pagu
-      // bidangnya (lihat bidangDariKegiatan di masterData.js).
-      let mapPagu = new Map();
-      try {
-        const paguBidang = await bacaPaguPerBidang();
-        paguBidangRef.current = paguBidang || null;
-        if (paguBidang) mapPagu = paguBidang.perBidang || mapPagu;
-      } catch (e) {
-        console.warn("Gagal membaca pagu per bidang:", e);
-        paguBidangRef.current = null;
-      }
-
-      // Tahap 0b — "Realisasi SPM" per bulan dari spreadsheet
-      // "Rekap SPM kumulatif per bulan.xlsx" di folder SPJ. Dipakai
-      // untuk angka di sebelah Persentase pada info bar.
-      ambilRekapSpm(API_KEY).catch((e) =>
-        console.warn("Gagal membaca Realisasi SPM:", e)
-      );
-
-      // Tahap 1 — daftar folder kegiatan (1 permintaan).
-      const isi = await listAnak(DRIVE_FOLDER_ID);
-      const folders = isi
-        .filter((f) => f.mimeType === FOLDER_MIME)
-        .map((f) => {
-          const { kode, nama } = parseNamaFolder(f.name);
-          /* Bidang kegiatan → pagu bidangnya dari spreadsheet (resume
-             SP2D). Pagu manual PAGU_KEGIATAN tetap diprioritaskan bila
-             diisi. */
-          const bidang = bidangDariKegiatan(kode, nama);
-          const paguManual = Number(PAGU_KEGIATAN[kode]) || 0;
-          const paguBidangNilai = bidang
-            ? (mapPagu.get(bidang) || {}).pagu || 0
-            : 0;
-          /* Pagu manual (PAGU_KEGIATAN) bersifat per kegiatan → tidak
-             memakai bidang (supaya tidak ikut ter-deduplikasi). */
-          const pakaiBidang = paguManual === 0;
-          return {
-            id: f.id,
-            kode,
-            nama: nama || f.name,
-            folderNama: f.name,
-            link: f.webViewLink || `https://drive.google.com/drive/folders/${f.id}`,
-            bidang: pakaiBidang ? bidang : "",
-            pagu: paguManual || paguBidangNilai,
-            realisasi: 0,
-            realisasiBerkas: 0,
-            sumberRealisasi: "—",
-            persen: 0,
-            tanggal: null,
-            jumlahBerkas: 0,
-            rekening: [],
-            berkas: [],
-            lainnya: [],
-            salinan: [],
-            lokal: false,
-          };
-        })
-        .sort((a, b) => a.kode.localeCompare(b.kode, "id"));
-
-      setRows(folders);
-      setProgress(0);
-      if (folders.length === 0) setLoading(false);
-
-      // Tahap 2 — telusuri folder rekening + berkas tiap kegiatan.
-      let selesai = 0;
-      await jalankanKolom(folders, async (row) => {
-        let rekening = [];
-        let berkas = [];
-        try {
-          const isiKegiatan = await listAnak(row.id);
-          const subFolder = isiKegiatan.filter(
-            (f) => f.mimeType === FOLDER_MIME
-          );
-          const berkasLuar = isiKegiatan.filter(
-            (f) => f.mimeType !== FOLDER_MIME
-          );
-
-          // Alur diagram: kegiatan → rekening → berkas SPM
-          const rek = [];
-          await jalankanKolom(
-            subFolder,
-            async (sub) => {
-              const isiRek = await listAnak(sub.id);
-              const files = isiRek.filter((f) => f.mimeType !== FOLDER_MIME);
-              rek.push({
-                kode: sub.name,
-                nama: namaRekening(sub.name),
-                jumlah: files.length,
-                link: sub.webViewLink,
-              });
-              berkas = berkas.concat(
-                files.map((f) => ({ ...f, rekening: sub.name }))
-              );
-            },
-            3
-          );
-          rekening = rek.sort((a, b) => a.kode.localeCompare(b.kode, "id"));
-          berkas = berkas.concat(
-            berkasLuar.map((f) => ({ ...f, rekening: "" }))
-          );
-        } catch (e) {
-          console.warn(`Gagal membaca folder kegiatan "${row.kode}":`, e);
-        }
-
-        // Pisahkan berkas SPM yang bisa dibaca namanya vs berkas lain.
-        const sudah = new Set();
-        const unik = [];
-        const lainnya = [];
-        const salinan = [];
-        const keyOf = (b) => `${b.spm.noSpm}|${b.spm.rekening}|${b.spm.nilai}`;
-        const bertanda = [];
-        berkas.forEach((f) => {
-          const spm = parseBerkasSpm(f.name, f.rekening);
-          if (spm) bertanda.push({ ...f, spm });
-          else lainnya.push(f);
-        });
-        // Berkas asli dulu, baru salinannya (agar yang tertuang bukan "Copy of").
-        [
-          ...bertanda.filter((b) => !b.spm.duplikat),
-          ...bertanda.filter((b) => b.spm.duplikat),
-        ].forEach((b) => {
-          const key = keyOf(b);
-          if (sudah.has(key)) {
-            // Salinan dari SPM yang sama → dicatat, tidak masuk realisasi.
-            salinan.push(b);
-            return;
+      const res = await muatDataKegiatanDariDrive({
+        barisTerdahulu: rowsRef.current,
+        onTahapSatu: ({ folders, rekapSheet: rs, paguBidang: pb }) => {
+          // Begitu folder kegiatan dari Drive terbaca (~1 detik),
+          // LANGSUNG tampilkan ke tabel! Jangan menunggu Tahap 2 selesai.
+          setRows(folders);
+          if (rs) {
+            setRekapSheet(rs);
+            rekapRef.current = rs.data;
           }
-          sudah.add(key);
-          unik.push(b);
-        });
-        unik.sort(
-          (a, b) => (a.spm.tanggal || "").localeCompare(b.spm.tanggal || "")
-        );
-        lainnya.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+          if (pb) {
+            paguBidangRef.current = pb;
+          }
+          setLoading(false);
+        },
+        onProgress: (selesai, total, rowTerbaru) => {
+          setProgress(selesai);
+          setRows((prev) =>
+            prev.map((r) => (r.id === rowTerbaru.id ? { ...r, ...rowTerbaru } : r))
+          );
+        },
+      });
 
-        const realisasiBerkas = unik.reduce((s, b) => s + b.spm.nilai, 0);
-        const tanggalTerakhir = unik.length
-          ? unik[unik.length - 1].spm.tanggal
-          : null;
-
-        // Angka utama diambil dari spreadsheet (rekap kumulatif);
-        // penjumlahan nama berkas PDF dipakai sebagai cadangan.
-        const rekap = rekapRef.current;
-        let dariSheet = 0;
-        let cocok = 0;
-        if (rekap) {
-          rekening.forEach((k) => {
-            const v = rekap.perRekening.get(String(k.kode).trim());
-            if (v) {
-              dariSheet += v.realisasi || 0;
-              cocok += 1;
-            }
-          });
+      if (res && res.rows) {
+        setRows(res.rows);
+        if (res.rekapSheet) {
+          setRekapSheet(res.rekapSheet);
+          rekapRef.current = res.rekapSheet.data;
         }
-        const pakaiSheet = rekap && cocok > 0 && dariSheet > 0;
-        const realisasi = pakaiSheet ? dariSheet : realisasiBerkas;
-
-        setRows((prev) =>
-          prev.map((r) =>
-            r.id === row.id
-              ? {
-                  ...r,
-                  realisasi,
-                  realisasiBerkas,
-                  sumberRealisasi: pakaiSheet ? "Spreadsheet" : "Berkas Drive",
-                  persen: hitungPersen(realisasi, r.pagu),
-                  tanggal: tanggalTerakhir,
-                  jumlahBerkas: unik.length + lainnya.length,
-                  rekening,
-                  berkas: unik,
-                  lainnya: lainnya,
-                  salinan: salinan,
-                }
-              : r
-          )
-        );
-        selesai += 1;
-        setProgress(selesai);
-      }, 4);
-
+        if (res.paguBidang) {
+          paguBidangRef.current = res.paguBidang;
+        }
+      }
+      setTerakhirMuat(Date.now());
       setLoading(false);
+      setMenyegarkan(false);
+      setCacheDipakai(false);
     } catch (e) {
       console.error("Gagal memuat Data Kegiatan:", e);
-      setError(
-        "Gagal mengambil data kegiatan dari Google Drive. " +
-          "Periksa koneksi internet atau API Key."
-      );
+      if (rowsRef.current.length > 0) {
+        setError(
+          "Gagal menyegarkan data dari Google Drive. Menampilkan data tersimpan terakhir."
+        );
+      } else {
+        setError(
+          "Gagal mengambil data kegiatan dari Google Drive. Periksa koneksi internet atau API Key."
+        );
+      }
       setLoading(false);
+      setMenyegarkan(false);
     }
   }, []);
 
+  // Saat halaman dibuka: jika cache masih segar, langsung gunakan data cache
+  // tanpa menunggu penelusuran ulang Google Drive.
   useEffect(() => {
-    muatData();
+    const cache = bacaCacheKegiatan();
+    if (cacheMasihSegar(cache)) {
+      setCacheDipakai(true);
+      setMenyegarkan(false);
+      setLoading(false);
+      return;
+    }
+    muatData(false);
   }, [muatData]);
 
   /* Realtime: "Realisasi SPM" disegarkan tiap menit (paksa baca ulang)
@@ -1030,9 +1148,15 @@ export default function DataKegiatan() {
   }, [rows, loading]);
 
   // Re-fetch saat ada berkas yang berubah di aplikasi / tab regain focus.
+  // Saat tab kembali fokus, penelusuran Drive hanya dijalankan bila
+  // data terakhir sudah lewat batas "segar" — supaya perpindahan tab
+  // tidak memicu pembacaan Drive yang lama.
   useEffect(() => {
-    const onUpdate = () => muatData();
-    const onFocus = () => muatData();
+    const onUpdate = () => muatData(true);
+    const onFocus = () => {
+      if (cacheMasihSegar(bacaCacheKegiatan())) return;
+      muatData(false);
+    };
     window.addEventListener("pu_files_updated", onUpdate);
     window.addEventListener("focus", onFocus);
     return () => {
@@ -1041,26 +1165,93 @@ export default function DataKegiatan() {
     };
   }, [muatData]);
 
-  /* ── Gabungkan baris dari Drive + baris yang ditambahkan user ── */
+  /* ── Gabungkan baris dari Drive + baris yang ditambahkan user ──
+     Bila kegiatan hasil impor folder sudah ada di Drive (folder baru
+     selesai diunggah/dibaca ulang), JANGAN tampilkan dua baris: data
+     impor digabung ke baris Drive-nya. */
   const semuaRows = useMemo(() => {
-    const extra = (tambahan || []).map((t) => ({
-      id: `local_${t.kode}`,
-      kode: t.kode,
-      nama: t.nama,
-      folderNama: null,
-      link: null,
-      pagu: Number(t.pagu) || 0,
-      realisasi: Number(t.realisasi) || 0,
-      persen: hitungPersen(t.realisasi, t.pagu),
-      tanggal: t.tanggal || null,
-      jumlahBerkas: 0,
-      rekening: [],
-      berkas: [],
-      lainnya: [],
-      salinan: [],
-      lokal: true,
-    }));
-    return [...rows, ...extra].sort((a, b) =>
+    const petaLokal = new Map();
+    (tambahan || []).forEach((t) => {
+      if (t && t.kode) petaLokal.set(kunciKode(t.kode), t);
+    });
+
+    const rowsDrive = (rows || []).map((r) => {
+      const t = petaLokal.get(kunciKode(r.kode));
+      if (!t) return r;
+      petaLokal.delete(kunciKode(r.kode));
+
+      const berkas = gabungBerkasUnik(r.berkas, t.berkas);
+      const lainnya = gabungBerkasUnik(r.lainnya, t.lainnya);
+      const impor = Boolean(
+        t.imporFolder ||
+          (t.realisasiPerBulan && Object.keys(t.realisasiPerBulan).length)
+      );
+      if (!impor && berkas.length === 0 && lainnya.length === 0) return r;
+
+      const totalImpor =
+        Number(t.realisasi) ||
+        Object.values(t.realisasiPerBulan || {}).reduce(
+          (a, b) => a + (Number(b) || 0),
+          0
+        );
+
+      const rekening = [...(r.rekening || [])];
+      const sudahRek = new Set(
+        rekening.map((k) => (k && typeof k === "object" ? k.kode : k))
+      );
+      rekeningDariBerkas(t.berkas).forEach((k) => {
+        if (!sudahRek.has(k.kode)) {
+          rekening.push(k);
+          sudahRek.add(k.kode);
+        }
+      });
+
+      return {
+        ...r,
+        ...(impor
+          ? {
+              realisasi: totalImpor,
+              realisasiPerBulan: t.realisasiPerBulan || null,
+              sumberRealisasi: t.sumberRealisasi || r.sumberRealisasi,
+            }
+          : {}),
+        berkas,
+        lainnya,
+        rekening,
+        jumlahBerkas: Math.max(
+          Number(r.jumlahBerkas) || 0,
+          Number(t.jumlahBerkas) || 0,
+          (t.berkas || []).length
+        ),
+        lokalImpor: impor,
+      };
+    });
+
+    const extra = [...petaLokal.values()].map((t) => {
+      const berkas = t.berkas || [];
+      return {
+        id: `local_${t.kode}`,
+        kode: t.kode,
+        nama: t.nama,
+        folderNama: null,
+        link: null,
+        pagu: Number(t.pagu) || 0,
+        realisasi: Number(t.realisasi) || 0,
+        persen: hitungPersen(t.realisasi, t.pagu),
+        tanggal: t.tanggal || null,
+        jumlahBerkas: Number(t.jumlahBerkas) || berkas.length,
+        rekening: rekeningDariBerkas(berkas),
+        berkas,
+        lainnya: t.lainnya || [],
+        salinan: [],
+        realisasiPerBulan: t.realisasiPerBulan || null,
+        sumberRealisasi: t.sumberRealisasi || "",
+        lokal: true,
+        imporFolder: Boolean(t.imporFolder),
+      };
+    });
+
+    return [...rowsDrive, ...extra].sort((a, b) =>
       String(a.kode).localeCompare(String(b.kode), "id")
     );
   }, [rows, tambahan]);
@@ -1111,25 +1302,292 @@ export default function DataKegiatan() {
     });
   }, []);
 
+  /* ── Realisasi SPM dari spreadsheet rekap bulanan ───────────
+     Bulan patokan diambil dari batas AKHIR filter "Bulan"/"s.d." di
+     toolbar (format YYYY-MM). Kalau bulan itu belum punya tab di
+     spreadsheet, datanya dianggap KOSONG ("—") — tidak menyalin angka
+     bulan sebelumnya. Kalau filter kosong, pakai bulan terakhir yang
+     benar-benar punya tab di spreadsheet, bukan bulan terakhir
+     kalender. */
+  const bulanRekapSpm = useMemo(() => {
+    const perBulan = (rekapSpm && rekapSpm.perBulan) || {};
+    const dariSampai = bulanIdDariYm(applied.sampai);
+    if (dariSampai) return perBulan[dariSampai] ? dariSampai : null;
+    const dariDari = bulanIdDariYm(applied.dari);
+    if (dariDari) return perBulan[dariDari] ? dariDari : null;
+    return bulanTerakhirDenganData(rekapSpm);
+  }, [rekapSpm, applied.dari, applied.sampai]);
+
+  const rekapSpmBulan = useMemo(
+    () => rekapRealisasiSpm(rekapSpm, TAHUN_ANGGARAN_AKTIF, bulanRekapSpm),
+    [rekapSpm, bulanRekapSpm]
+  );
+
+  /* ── Laporan SPM bulan terpilih (sesuai tab spreadsheet) ────
+     Saat filter bulan aktif, ringkas laporan SPM dari spreadsheet
+     "Rekap SPM kumulatif per bulan":
+       · `kumulatif` — angka kumulatif s.d. bulan itu (isi tab-nya);
+       · `bulanIni`  — realisasi khusus bulan itu (selisih kumulatif
+                       bulan ini − bulan sebelumnya);
+       · `tab` / `label` — nama tab & label bulan sumbernya.
+     Angka ini diambil langsung dari tab bulan terkait, bukan dari
+     penjumlahan berkas PDF. */
+  const laporanSpmBulan = rekapSpmBulan;
+
+  /* ── LEDGER SPM (bukti laporan SPM dari spreadsheet) ────────
+     Bukti laporan SPM diambil dari tab "Rekap SPM kumulatif per
+     bulan" — tab yang BERKUMPULATIF sejak Januari, jadi nilainya
+     adalah kumulatif s.d. bulan yang dipilih (tab "Jan" untuk
+     Januari, "Jan-Agst" untuk Agustus, dst). Setiap baris ledger
+     = satu SPM (No. SPM, rekening, TANGGAL, nilai) sehingga:
+       · kolom Realisasi & bukti SPM memakai sumber yang sama;
+       · "realisasi bulan ini" bisa dihitung dari tanggal SPM-nya. */
+  const tabLedgerSpm =
+    rekapSpm && rekapSpm.perBulan && bulanRekapSpm
+      ? (rekapSpm.perBulan[bulanRekapSpm] || {}).tab || null
+      : null;
+  const [ledgerSpm, setLedgerSpm] = useState(null); // {tabNama, per(Map), jumlahSpm, total}
+  useEffect(() => {
+    let batal = false;
+    if (!tabLedgerSpm) {
+      setLedgerSpm(null);
+      return;
+    }
+    ambilLedgerSpm({ tabNama: tabLedgerSpm }).then((hasil) => {
+      if (!batal) setLedgerSpm(hasil);
+    });
+    return () => {
+      batal = true;
+    };
+  }, [tabLedgerSpm]);
+
+  /* Nomor bulan patokan (1…12) untuk menandai "SPM bulan ini". */
+  const nomorBulanRekap = useMemo(
+    () => nomorBulanDariId(bulanRekapSpm),
+    [bulanRekapSpm]
+  );
+
+  /* Realisasi KHUSUS bulan patokan — dihitung dari tanggal SPM pada
+     ledger (bukan selisih total GVIZ), jadi selalu pas dengan daftar
+     buktinya. */
+  const ledgerBulanIni = useMemo(() => {
+    if (!ledgerSpm || !nomorBulanRekap) return { jumlah: 0, nilai: 0 };
+    let jumlah = 0;
+    let nilai = 0;
+    ledgerSpm.per.forEach((blok) => {
+      blok.rows.forEach((r) => {
+        if (!r.tanggal) return;
+        if (Number(String(r.tanggal).slice(5, 7)) !== nomorBulanRekap) return;
+        jumlah += 1;
+        nilai += r.nilai || 0;
+      });
+    });
+    return { jumlah, nilai };
+  }, [ledgerSpm, nomorBulanRekap]);
+
+
+  /* Baris ledger yang SESUAI filter bulan (dari–sampai) — inilah yang
+     ditampilkan langsung di kolom Bukti Kerja. Tanpa filter → seluruh
+     baris kumulatif tab. */
+  const ledgerTerpilihIndex = useMemo(() => {
+    const peta = new Map();
+    if (!ledgerSpm) return peta;
+    const dari = applied.dari;
+    const sampai = applied.sampai;
+    ledgerSpm.per.forEach((blok, kode) => {
+      const rows =
+        dari || sampai
+          ? blok.rows.filter((r) => {
+              const ym = r.tanggal ? String(r.tanggal).slice(0, 7) : null;
+              if (!ym) return false;
+              return (!dari || ym >= dari) && (!sampai || ym <= sampai);
+            })
+          : blok.rows;
+      if (!rows.length) return;
+      const isi = {
+        kode,
+        rows,
+        total: rows.reduce((s, r) => s + (r.nilai || 0), 0),
+      };
+      if (!peta.has(kode)) peta.set(kode, isi);
+      const k = kunciKode(kode);
+      if (!peta.has(k)) peta.set(k, isi);
+    });
+    return peta;
+  }, [ledgerSpm, applied.dari, applied.sampai]);
+
+  const ledgerTerpilihPilih = useCallback(
+    (kode) => {
+      if (!ledgerSpm || !kode) return null;
+      return (
+        ledgerTerpilihIndex.get(kode) ||
+        ledgerTerpilihIndex.get(kunciKode(kode)) ||
+        null
+      );
+    },
+    [ledgerSpm, ledgerTerpilihIndex]
+  );
+
+  /* Indeks ledger TANPA filter bulan — khusus untuk pencarian. Supaya
+     kode akun belanja (rekening) yang hanya ada di spreadsheet tetap
+     bisa ditemukan walau bulan yang dipilih tidak memuat barisnya. */
+  const ledgerSemuaIndex = useMemo(() => {
+    const peta = new Map();
+    if (!ledgerSpm) return peta;
+    ledgerSpm.per.forEach((blok, kode) => {
+      if (!peta.has(kode)) peta.set(kode, blok);
+      const k = kunciKode(kode);
+      if (!peta.has(k)) peta.set(k, blok);
+    });
+    return peta;
+  }, [ledgerSpm]);
+
+  const ledgerSemuaPilih = useCallback(
+    (kode) => {
+      if (!ledgerSpm || !kode) return null;
+      return ledgerSemuaIndex.get(kode) || ledgerSemuaIndex.get(kunciKode(kode)) || null;
+    },
+    [ledgerSpm, ledgerSemuaIndex]
+  );
+  const ledgerTabNama = ledgerSpm ? ledgerSpm.tabNama : tabLedgerSpm;
+  /* Pecahan bukti ledger per kode akun belanja: Map(kode kegiatan →
+     Map(rekening → {jumlah, total})). Sumbernya baris yang sama dengan
+     badge "📎 N berkas · Rp X" pada baris Kode Kegiatan, sehingga baris
+     Kode Akun Belanja di bawahnya bisa memecah jumlah berkas tersebut
+     ke dalam kode belanja masing-masing. */
+  const buktiPerRekening = useMemo(() => {
+    const peta = new Map(); // kunciKode(kegiatan) → Map(rekening → …)
+    if (!ledgerSpm) return peta;
+    ledgerSpm.per.forEach((blok, kode) => {
+      const rows =
+        applied.dari || applied.sampai
+          ? blok.rows.filter((r) => {
+              const ym = r.tanggal ? String(r.tanggal).slice(0, 7) : null;
+              if (!ym) return false;
+              return (
+                (!applied.dari || ym >= applied.dari) &&
+                (!applied.sampai || ym <= applied.sampai)
+              );
+            })
+          : blok.rows;
+      if (!rows.length) return;
+      rows.forEach((r) => {
+        const rek = String(r.rekening || "").trim();
+        if (!rek) return;
+        const kunci = kunciKode(kode);
+        let per = peta.get(kunci);
+        if (!per) {
+          per = new Map();
+          peta.set(kunci, per);
+        }
+        const e = per.get(rek) || { jumlah: 0, total: 0 };
+        e.jumlah += 1;
+        e.total += r.nilai || 0;
+        per.set(rek, e);
+      });
+    });
+    return peta;
+  }, [ledgerSpm, applied.dari, applied.sampai]);
+  const filterBulanAktif = Boolean(applied.dari || applied.sampai);
   /* ── Terapkan filter ────────────────────────────────────── */
   const tabelRows = useMemo(() => {
-    const q = applied.cari.trim().toLowerCase();
+    const q = applied.cari.trim();
     return semuaRows.filter((r) => {
       if (q) {
-        const haystack = `${r.kode} ${r.nama}`.toLowerCase();
-        if (!haystack.includes(q)) return false;
+        /* Cocokkan ke kode kegiatan, nama kegiatan, dan kode/nama akun
+           belanja. Data yang diinput lewat "+ Tambah Data" ikut karena
+           berada di `semuaRows` yang sama. */
+        const nilaiCari = [r.kode, r.nama, r.folderNama].concat(
+          nilaiRekeningUntukCari(r)
+        );
+        /* Kode akun belanja dari ledger SPM + KODE LENGKAP (kode
+           kegiatan + kode akun). Kode lengkap inilah yang tampil di
+           kolom "Kode Lengkap" pada mode hasil pencarian — contoh
+           7769.AFA.001.100.A.521211 — sehingga harus ikut dicocokkan
+           walau folder rekeningnya tidak ada di Drive. */
+        const akun = new Set();
+        (r.rekening || []).forEach((k) => {
+          const kodeAkun = k && typeof k === "object" ? k.kode : k;
+          if (kodeAkun) akun.add(String(kodeAkun).trim());
+        });
+        const blokSemua = ledgerSemuaPilih(r.kode);
+        const barisLedger = blokSemua && blokSemua.rows ? blokSemua.rows : [];
+        barisLedger.forEach((b) => {
+          const kodeAkun = String((b && b.rekening) || "").trim();
+          if (kodeAkun) akun.add(kodeAkun);
+        });
+        akun.forEach((kodeAkun) => {
+          nilaiCari.push(
+            kodeAkun,
+            namaRekening(kodeAkun),
+            `${r.kode}.${kodeAkun}`
+          );
+        });
+        if (!cocokCari(q, ...nilaiCari)) return false;
       }
-      // Filter berdasarkan bulan-tahun (YYYY-MM) — hanya tanggal valid
-      // yang ikut dibandingkan, agar tidak ada bulan palsu.
-      const rowMonth = bulanIso(r.tanggal);
-      if (applied.dari && (!rowMonth || rowMonth < applied.dari)) return false;
-      if (applied.sampai && (!rowMonth || rowMonth > applied.sampai)) return false;
-      return true;
+      /* Filter bulan-tahun (YYYY-MM). Sebuah kegiatan dianggap cocok
+         bila ADA berkas SPM-nya yang bertanggal pada rentang bulan
+         itu — bukan hanya tanggal SPM terakhirnya — supaya bukti
+         laporan SPM per kode kegiatan tidak hilang dari tabel.
+         Baris tanpa berkas (mis. input manual) tetap dibandingkan
+         lewat tanggal barisnya. */
+      if (!applied.dari && !applied.sampai) return true;
+
+      const dalamRentang = (ym) =>
+        !!ym &&
+        (!applied.dari || ym >= applied.dari) &&
+        (!applied.sampai || ym <= applied.sampai);
+
+      const bulanBerkas = (r.berkas || [])
+        .map((b) => bulanIso(b && b.spm ? b.spm.tanggal : null))
+        .filter(Boolean);
+      const bulanImpor = Object.keys(r.realisasiPerBulan || {});
+      if (bulanBerkas.length > 0 || bulanImpor.length > 0) {
+        return (
+          bulanBerkas.some(dalamRentang) || bulanImpor.some(dalamRentang)
+        );
+      }
+      return dalamRentang(bulanIso(r.tanggal));
     });
-  }, [semuaRows, applied]);
+  }, [semuaRows, applied, ledgerSemuaPilih]);
+
+  /* Realisasi per kode kegiatan dari LEDGER spreadsheet (sumber yang
+     sama dengan bukti laporan SPM) — supaya kolom Realisasi dan
+     bukti SPMnya selalu cocok. Bila kegiatan tidak ada di ledger,
+     dipakai angka-realisasi bawaan (rekap GVIZ / berkas Drive). */
+  const realisasiLedger = useMemo(() => {
+    const peta = new Map();
+    if (!ledgerSpm) return peta;
+    ledgerSpm.per.forEach((blok, kode) => {
+      const total = blok.rows.reduce((s, r) => s + (r.nilai || 0), 0);
+      peta.set(kunciKode(kode), total);
+    });
+    return peta;
+  }, [ledgerSpm]);
+
+  const realisasiBaris = useCallback(
+    (r) => {
+      /* Data impor folder punya rincian per bulan. Saat filter bulan
+         aktif, jumlahkan HANYA bulan yang masuk rentang — bukan total
+         seluruh tahun. */
+      if (r.realisasiPerBulan && Object.keys(r.realisasiPerBulan).length) {
+        return Object.entries(r.realisasiPerBulan).reduce((total, [ym, n]) => {
+          if (applied.dari && ym < applied.dari) return total;
+          if (applied.sampai && ym > applied.sampai) return total;
+          return total + (Number(n) || 0);
+        }, 0);
+      }
+      const v = realisasiLedger.get(kunciKode(r.kode));
+      return typeof v === "number" ? v : r.realisasi || 0;
+    },
+    [realisasiLedger, applied.dari, applied.sampai]
+  );
 
   /* ── Pohon hierarkis (kode induk → cabang → detail → akun) ── */
-  const pohon = useMemo(() => bangunPohon(tabelRows, rekapSheetData), [tabelRows, rekapSheetData]);
+  const pohon = useMemo(
+    () => bangunPohon(tabelRows, rekapSheetData, realisasiBaris),
+    [tabelRows, rekapSheetData, realisasiBaris]
+  );
   const barisTampil = useMemo(
     () => flattenPohon(pohon, isOpen),
     [pohon, isOpen]
@@ -1174,40 +1632,394 @@ export default function DataKegiatan() {
     });
     return total;
   })();
-  const totalRealisasi = tabelRows.reduce((s, r) => s + (r.realisasi || 0), 0);
+  const totalRealisasi = tabelRows.reduce((s, r) => s + realisasiBaris(r), 0);
   const totalBerkas = tabelRows.reduce((s, r) => s + (r.jumlahBerkas || 0), 0);
 
-  /* ── Realisasi SPM dari spreadsheet rekap bulanan ───────────
-     Bulan patokan diambil dari filter "Bulan"/"s.d." di toolbar
-     (format YYYY-MM). Kalau filter kosong, pakai bulan terakhir
-     yang benar-benar punya tab di spreadsheet, bukan bulan
-     terakhir kalender. */
-  const bulanRekapSpm = useMemo(() => {
-    const perBulan = (rekapSpm && rekapSpm.perBulan) || {};
-    const dariSampai = bulanIdDariYm(applied.sampai);
-    if (dariSampai && perBulan[dariSampai]) return dariSampai;
-    const dariDari = bulanIdDariYm(applied.dari);
-    if (dariDari && perBulan[dariDari]) return dariDari;
-    return bulanTerakhirDenganData(rekapSpm);
-  }, [rekapSpm, applied.dari, applied.sampai]);
+  /* ── Ringkasan bulan untuk kotak filter ─────────────────────
+     Supaya jelas "data mana yang terhubung" dengan bulan yang
+     dipilih, dihitung dari hasil filter:
+       · bulanAktif  — daftar bulan (YYYY-MM) yang benar-benar ada
+                       di data, beserta jumlah kegiatannya (untuk chips);
+       · ringkasBulan — jumlah kegiatan / realisasi / berkas yang
+                       LOLOS filter bulan aktif.
+     Bulan dihitung dari SEMUA tanggal berkas SPM (bukan hanya tanggal
+     SPM terakhir tiap kegiatan) — supaya bulan yang bukan "bulan
+     terakhir" kegiatan mana pun (mis. Januari yang berkasnya sudah
+     tertutup berkas bulan-bulan berikutnya) tetap muncul sebagai chip
+     dan menghasilkan bukti laporan SPM saat difilter.
+     Hanya tanggal valid yang dihitung (bulanIso mengembalikan null
+     untuk tanggal kosong/tidak valid). */
+  const bulanTersedia = useMemo(() => {
+    const perBulan = new Map();
+    const ambil = (m) => {
+      let isi = perBulan.get(m);
+      if (!isi) {
+        isi = { bulan: m, kegiatan: new Set(), realisasi: 0, berkas: 0 };
+        perBulan.set(m, isi);
+      }
+      return isi;
+    };
+    semuaRows.forEach((r) => {
+      const perBulanImpor =
+        r.realisasiPerBulan && Object.keys(r.realisasiPerBulan).length
+          ? r.realisasiPerBulan
+          : null;
+      if (perBulanImpor) {
+        /* Impor folder: angka realisasi per bulan sudah pasti. Bukti
+           PDF dihitung per bulannya untuk chip "N berkas". */
+        Object.entries(perBulanImpor).forEach(([m, nilai]) => {
+          if (!/^\d{4}-\d{2}$/.test(m)) return;
+          const isi = ambil(m);
+          isi.kegiatan.add(r.kode);
+          isi.realisasi += Number(nilai) || 0;
+        });
+        (r.berkas || []).forEach((b) => {
+          if (!b || !b.spm || !b.spm.tanggal) return;
+          const m = bulanIso(b.spm.tanggal);
+          if (m) ambil(m).berkas += 1;
+        });
+        return;
+      }
 
-  const rekapSpmBulan = useMemo(
-    () => rekapRealisasiSpm(rekapSpm, TAHUN_ANGGARAN_AKTIF, bulanRekapSpm),
-    [rekapSpm, bulanRekapSpm]
+      const daftar = (r.berkas || []).filter(
+        (b) => b && b.spm && b.spm.tanggal
+      );
+      if (daftar.length) {
+        daftar.forEach((b) => {
+          const m = bulanIso(b.spm.tanggal);
+          if (!m) return;
+          const isi = ambil(m);
+          isi.kegiatan.add(r.kode);
+          isi.realisasi += b.spm.nilai || 0;
+          isi.berkas += 1;
+        });
+      } else {
+        /* Baris tanpa berkas (mis. input manual) → pakai tanggal baris. */
+        const m = bulanIso(r.tanggal);
+        if (!m) return;
+        const isi = ambil(m);
+        isi.kegiatan.add(r.kode);
+        isi.realisasi += r.realisasi || 0;
+        isi.berkas += r.jumlahBerkas || 0;
+      }
+    });
+    return [...perBulan.values()]
+      .map((isi) => ({
+        bulan: isi.bulan,
+        jumlah: isi.kegiatan.size,
+        realisasi: isi.realisasi,
+        berkas: isi.berkas,
+      }))
+      .sort((a, b) => a.bulan.localeCompare(b.bulan));
+  }, [semuaRows]);
+
+
+
+  const ringkasBulan = useMemo(
+    () => ({
+      jumlah: tabelRows.length,
+      realisasi: totalRealisasi,
+      berkas: totalBerkas,
+    }),
+    [tabelRows, totalRealisasi, totalBerkas]
   );
+
+  /* Pilih satu bulan dari chips: bila bulan itu sedang menjadi batas
+     "dari" DAN "sampai" (bulan tunggal), klik berikutnya melepasnya. */
+  const pilihBulan = useCallback((bulan) => {
+    const sudahSama = applied.dari === bulan && applied.sampai === bulan;
+    const baru = sudahSama
+      ? { ...applied, dari: "", sampai: "" }
+      : { ...applied, dari: bulan, sampai: bulan };
+    setDraft(baru);
+    setApplied(baru);
+  }, [applied]);
+
+
+
+  /* Label periode filter (rentang dari–sampai) — dipakai untuk judul
+     kolom Bukti Kerja, tombol, dan modal bukti laporan SPM. */
+  const periodeFilterLabel = filterBulanAktif
+    ? labelPeriodeBulan(applied.dari, applied.sampai)
+    : "";
+
+  /* Daftar bukti kerja SPM (PDF dari Drive) yang tanggal SPM-nya masuk
+     RENTANG bulan terpilih (dari s/d sampai) — bukan hanya satu bulan —
+     supaya totalnya cocok dengan angka realisasi kumulatif.
+     Hanya berkas dengan tanggal valid yang ikut; nilai diambil apa
+     adanya dari nama berkas (bukan sumber angka realisasi). */
+
+
+
+
+  /* SPM tanpa tanggal & berkas lain dari SEMUA baris tab aktif —
+     dipakai panel "Bukti Laporan SPM" supaya bukti PDF yang pola nama-
+     nya tidak sesuai (tak bisa dipetakan ke bulan) tetap bisa
+     diperiksa, bukan sembunyi diam-diam. */
+
+
+  /* Seluruh baris ledger (per kode kegiatan) untuk modal rekapan
+     bulan gabungan. */
+
+
+  /* Baris ledger (SEMUA kegiatan) untuk rentang filter — dipakai panel
+     ringkasan di atas tabel. */
+  const ledgerBarisPeriode = useMemo(() => {
+    if (!ledgerSpm) return [];
+    const dari = applied.dari;
+    const sampai = applied.sampai;
+    const keluar = [];
+    ledgerSpm.per.forEach((blok, kode) => {
+      blok.rows.forEach((r) => {
+        if (dari || sampai) {
+          const ym = r.tanggal ? String(r.tanggal).slice(0, 7) : null;
+          if (!ym) return;
+          if ((dari && ym < dari) || (sampai && ym > sampai)) return;
+        }
+        keluar.push({ ...r, kegiatanKode: kode });
+      });
+    });
+    return keluar;
+  }, [ledgerSpm, applied.dari, applied.sampai]);
+
+  const ledgerPeriodeTotal = useMemo(
+    () => ledgerBarisPeriode.reduce((s, r) => s + (r.nilai || 0), 0),
+    [ledgerBarisPeriode]
+  );
+
+  /* ── Bukti laporan SPM per KODE KEGIATAN ─────────────────────
+     Untuk tombol ringkas di kolom "Bukti Kerja", dikelompokkan
+     menurut kode kegiatan:
+       berkasPerKegiatan : Map(kode kegiatan → daftar berkas SPM)
+       nilaiPerKegiatan  : Map(kode kegiatan → jumlah nilai berkas)
+     Saat filter bulan aktif → berkas yang tanggalnya masuk rentang
+     dari s/d sampai (kumulatif, cocok dengan angka realisasi);
+     bila tidak → seluruh berkas SPM kegiatan tersebut. */
+  const berkasPerKegiatan = useMemo(() => {
+    const peta = new Map();
+    const dari = applied.dari;
+    const sampai = applied.sampai;
+    const dalamRentang = (ym) =>
+      !!ym &&
+      (!dari || ym >= dari) &&
+      (!sampai || ym <= sampai);
+    semuaRows.forEach((r) => {
+      const semua = r.berkas || [];
+      const daftar =
+        dari || sampai
+          ? semua.filter((b) => dalamRentang(b && b.spm ? b.spm.tanggal : null))
+          : semua;
+      if (daftar.length) peta.set(r.kode, daftar);
+    });
+    return peta;
+  }, [semuaRows, applied.dari, applied.sampai]);
+
+
+
+  /* ── Mode filter: BARIS DATAR (level kode akun belanja) ───────
+     Saat filter terisi, pohon (induk/cabang/detail) tidak lagi
+     ditampilkan — diganti baris datar per kode kegiatan + kode akun
+     belanja, lengkap dengan KODE LENGKAP, uraian, realisasi,
+     tanggal, dan nomor SPM. */
+  const barisFilter = useMemo(() => {
+    const keluar = [];
+    const q = applied.cari.trim();
+    tabelRows.forEach((r) => {
+      const kode = r.kode;
+      /* Bila kata kunci hanya menyebut kode/nama akun belanja (bukan
+         kode/nama kegiatan), tampilkan HANYA akun yang cocok. Bila
+         kegiatan itu sendiri yang cocok, semua akunnya tetap tampil. */
+      const cocokKegiatan =
+        !q || cocokCari(q, kode, r.nama, r.folderNama);
+      const blok = ledgerTerpilihPilih(kode);
+      const grup = new Map();
+      const tambah = (rek, tgl, no, nilai) => {
+        const k = rek || "—";
+        if (!grup.has(k)) {
+          grup.set(k, { rekening: k, nilai: 0, tanggal: null, spm: [] });
+        }
+        const g = grup.get(k);
+        g.nilai += nilai || 0;
+        if (tgl && (!g.tanggal || tgl > g.tanggal)) g.tanggal = tgl;
+        if (no) g.spm.push(no);
+      };
+      if (blok && blok.rows.length) {
+        blok.rows.forEach((row) =>
+          tambah(row.rekening, row.tanggal, row.noSpm, row.nilai)
+        );
+      } else {
+        (r.berkas || []).forEach((b) => {
+          if (!b.spm) return;
+          tambah(b.spm.rekening, b.spm.tanggal, b.spm.noSpm, b.spm.nilai);
+        });
+      }
+      /* Berkas PDF kegiatan ini: bertanggal (dalam rentang filter),
+         tanpa tanggal terbaca, dan berkas lain. Semua dihitung agar
+         tombol "Bukti PDF" tetap muncul walau hanya ada berkas
+         non-standar. */
+      const pdfBerkas = berkasPerKegiatan.get(kode) || [];
+      const pdfTanpaTanggal = (r.berkas || []).filter(
+        (b) => b.spm && !b.spm.tanggal
+      );
+      const pdfLainnya = r.lainnya || [];
+      const jumlahPdf = pdfBerkas.length + pdfTanpaTanggal.length + pdfLainnya.length;
+
+      if (!grup.size) {
+        /* Kegiatan tanpa SPM sama sekali → tetap ditampilkan, supaya
+           tidak ada baris yang "hilang" saat mode filter. Untuk data
+           yang diinput lewat "+ Tambah Data", angka realisasi manual
+           tetap ditampilkan (bukan 0). */
+        keluar.push({
+          kode,
+          kegiatan: r.nama || kode,
+          uraian: r.lokal ? "Data input manual" : "Belum ada SPM",
+          realisasi: r.realisasi || 0,
+          tanggal: r.tanggal,
+          spm: [],
+          pdf: pdfBerkas.map((b) => ({
+            no: b.spm.noSpm,
+            rek: b.spm.rekening,
+            nilai: b.spm.nilai,
+            tgl: b.spm.tanggal,
+            nama: b.name,
+            link: b.webViewLink,
+          })),
+          pdfTanpaTanggal,
+          pdfLainnya,
+          jumlahPdf,
+        });
+        return;
+      }
+
+      grup.forEach((g) => {
+        const rekening = g.rekening && g.rekening !== "—" ? g.rekening : "";
+        /* Kode lengkap = kode kegiatan + kode akun belanja. Pencarian
+           seperti "7769.AFA.001.100.A.521211" dicocokkan ke kode ini,
+           bukan hanya ke kode kegiatan atau kode akun saja. */
+        const kodeLengkap = rekening ? `${kode}.${rekening}` : kode;
+        if (
+          !cocokKegiatan &&
+          !cocokCari(q, kodeLengkap, rekening, namaRekening(rekening))
+        ) {
+          return;
+        }
+        keluar.push({
+          kode: kodeLengkap,
+          kegiatan: r.nama || kode,
+          uraian: namaRekening(g.rekening),
+          realisasi: g.nilai,
+          tanggal: g.tanggal || r.tanggal,
+          spm: g.spm,
+          /* Bukti PDF di Drive untuk kode kegiatan ini (dengan tautan). */
+          pdf: pdfBerkas.map((b) => ({
+            no: b.spm.noSpm,
+            rek: b.spm.rekening,
+            nilai: b.spm.nilai,
+            tgl: b.spm.tanggal,
+            nama: b.name,
+            link: b.webViewLink,
+          })),
+          pdfTanpaTanggal,
+          pdfLainnya,
+          jumlahPdf,
+        });
+      });
+    });
+    return keluar;
+  }, [tabelRows, ledgerTerpilihPilih, berkasPerKegiatan, applied.cari]);
 
   const adaFilter =
     Boolean(applied.cari || applied.dari || applied.sampai) ||
     Boolean(draft.cari || draft.dari || draft.sampai);
 
-  /* Reset form + pilihan berkas saat modal ditutup. */
+  /* Mode tabel datar aktif bila filter benar-benar dipakai (applied) —
+     saat filter dikosongkan, tampilan kembali ke mode pohon. */
+  const filterTabelDatar = Boolean(
+    applied.cari.trim() || applied.dari || applied.sampai
+  );
+
+  /* Reset form + hasil impor saat modal ditutup. */
   const resetFormTambah = useCallback(() => {
-    setFormTambah({ segmen: [], nama: "", pagu: "", realisasi: "" });
-    setFileTambah(null);
+    setFormTambah({ segmen: [], nama: "" });
+    setAnalisaTambah(null);
+    setMenganalisaTambah(false);
+    setDragTambah(false);
+    setPesanFileTambah("");
     setSubFolderRekening("");
     setDaftarRekening([]);
     setStatusUpload(null);
   }, []);
+
+  /* ── Baca folder / berkas yang dijatuhkan (khusus admin) ──────
+     Folder dan subfolder ditelusuri otomatis; PDF dipakai sebagai
+     bukti, Excel/CSV dipakai sebagai sumber angka realisasi. Tidak
+     ada pemilih berkas (file picker). */
+  const prosesEntriTambah = useCallback(
+    async (entri, kodeCadangan, namaCadangan) => {
+      setMenganalisaTambah(true);
+      setPesanFileTambah("");
+      setStatusUpload(null);
+      setDaftarRekening([]);
+      setSubFolderRekening("");
+      try {
+        const hasil = await analisaDropKegiatan(entri, {
+          kode: kodeCadangan,
+          nama: namaCadangan,
+        });
+        setAnalisaTambah(hasil);
+        if (hasil.kode) {
+          setFormTambah((lama) => ({
+            segmen: hasil.kode.split("."),
+            nama: hasil.nama || lama.nama,
+          }));
+        } else {
+          setPesanFileTambah(
+            "Kode kegiatan tidak terbaca dari nama folder. Isi Kode Kegiatan dan Nama Kegiatan secara manual."
+          );
+        }
+      } catch (err) {
+        setAnalisaTambah(null);
+        setPesanFileTambah(String((err && err.message) || err));
+      } finally {
+        setMenganalisaTambah(false);
+      }
+    },
+    []
+  );
+
+  const handleDragOverTambah = useCallback(
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (santaiUpload) return;
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      setDragTambah(true);
+    },
+    [santaiUpload]
+  );
+
+  const handleDragLeaveTambah = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    /* Jangan matikan status saat kursor hanya berpindah ke elemen
+       anak di dalam dropzone (menghindari kedip). */
+    if (e.currentTarget && e.currentTarget.contains(e.relatedTarget)) return;
+    setDragTambah(false);
+  }, []);
+
+  const handleDropTambah = useCallback(
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragTambah(false);
+      if (santaiUpload) return;
+      /* Entry folder harus diambil SINKRON selama event drop masih
+         berlangsung; proses pembacaannya boleh async. */
+      const entri = ambilEntriDrop(e.dataTransfer);
+      prosesEntriTambah(entri, kodeGabung, formTambah.nama);
+    },
+    [santaiUpload, prosesEntriTambah, kodeGabung, formTambah.nama]
+  );
 
   /* Tutup modal + bersihkan form (dipakai tombol Batal & tutup). */
   const tutupModalTambah = useCallback(() => {
@@ -1245,7 +2057,7 @@ export default function DataKegiatan() {
   // lalu tampilkan daftar sub-folder rekening sebagai tujuan unggah.
   // */
   useEffect(() => {
-    if (!modalTambah || !fileTambah || !kodeGabung) return undefined;
+    if (!modalTambah || !analisaTambah || !kodeGabung) return undefined;
     let batal = false;
     setDaftarRekening([]);
     setSubFolderRekening("");
@@ -1270,69 +2082,164 @@ export default function DataKegiatan() {
     return () => {
       batal = true;
     };
-  }, [modalTambah, fileTambah, kodeGabung, muatSubFolderRekening]);
+  }, [modalTambah, analisaTambah, kodeGabung, muatSubFolderRekening]);
+
+  /* Unggah semua berkas hasil analisa ke folder kegiatan di Drive,
+     menjaga struktur subfolder (berkas anak per folder induk). */
+  const unggahSemuaBerkasKeFolder = useCallback(
+    async (token, folder, files, indukLangsung) => {
+      const cacheAnak = new Map();
+      const anakDari = async (id) => {
+        if (!cacheAnak.has(id)) cacheAnak.set(id, await listAnak(id));
+        return cacheAnak.get(id);
+      };
+      const folderUntuk = async (segments) => {
+        let induk = folder.id;
+        for (const seg of segments || []) {
+          const namaSeg = String(seg || "").trim();
+          if (!namaSeg) continue;
+          const anak = await anakDari(induk);
+          let sub = (anak || []).find(
+            (f) => f.mimeType === FOLDER_MIME && f.name === namaSeg
+          );
+          if (!sub) {
+            sub = await buatFolderDrive(token, namaSeg, induk);
+            (anak || []).push(sub);
+          }
+          induk = sub.id;
+        }
+        return induk;
+      };
+
+      const hasil = [];
+      for (let i = 0; i < files.length; i += 1) {
+        const f = files[i];
+        const path = f.path || [];
+        const sub = path.slice(1); // buang nama folder kegiatan akar
+        const induk = sub.length ? await folderUntuk(sub) : indukLangsung || folder.id;
+        const up = await unggahBerkasDrive(token, induk, f.file);
+        hasil.push({ ...up, kunci: kunciPathBerkas(path, f.file.name), path });
+      }
+      return hasil;
+    },
+    []
+  );
 
   const handleSimpanTambah = async (e) => {
     e.preventDefault();
     if (santaiUpload) return;
-    const kode = kodeGabung;
-    if (!kode || !formTambah.nama.trim()) return;
+
+    const kode =
+      (kodeGabung || (analisaTambah && analisaTambah.kode) || "").trim();
+    const nama =
+      (formTambah.nama.trim() ||
+        (analisaTambah && analisaTambah.nama) ||
+        ""
+      ).trim();
+    if (!kode || !nama) {
+      setPesanFileTambah(
+        !kode ? "Kode kegiatan masih kosong sebelum menyimpan." : ""
+      );
+      return;
+    }
+
+    /* Bila ada hasil impor folder → gunakan kode/nama dari folder (atau
+       form bila sempat diisi) dan realisasi per bulan dari PDF/Excel. */
+    if (analisaTambah) {
+      const next = gabungImporKeDaftar(tambahan, {
+        ...analisaTambah,
+        kode,
+        nama,
+      });
+      setTambahan(next);
+      tulisKegiatanTambahan(next);
+
+      const files = analisaTambah.files || [];
+      if (files.length > 0) {
+        setSantaiUpload(true);
+        setStatusUpload("Menyiapkan koneksi ke Google Drive…");
+        try {
+          let token = bacaToken();
+          if (!token) {
+            setStatusUpload("Silakan login dengan akun Google Anda…");
+            token = await mintaTokenAkses();
+            simpanToken(token);
+          }
+          setStatusUpload("Mencari folder kegiatan di Drive…");
+          const { folder, dibuat } = await siapkanFolderKegiatan(
+            token,
+            kode,
+            nama
+          );
+          setStatusUpload(
+            dibuat
+              ? "Folder kegiatan dibuat di Drive. Mengunggah berkas…"
+              : "Folder kegiatan ditemukan. Mengunggah berkas…"
+          );
+          const hasilUpload = await unggahSemuaBerkasKeFolder(
+            token,
+            folder,
+            files,
+            subFolderRekening
+          );
+
+          /* Sinkronkan link Drive ke baris yang tersimpan di localStorage. */
+          const daftar = bacaKegiatanTambahan();
+          const petaUpload = new Map(
+            (hasilUpload || []).map((h) => [h.kunci, h])
+          );
+          const nextLinks = daftar.map((t) => {
+            const cocok =
+              String(t.kode || "").trim().toUpperCase() ===
+              String(kode).trim().toUpperCase();
+            if (!cocok) return t;
+            const updateBerkas = (b) => {
+              if (!b) return b;
+              const up = petaUpload.get(kunciPathBerkas(b.path, b.name));
+              return up ? { ...b, id: up.id, webViewLink: up.webViewLink } : b;
+            };
+            const updateLain = (b) => {
+              if (!b) return b;
+              const up = petaUpload.get(kunciPathBerkas(b.path, b.name));
+              return up ? { ...b, id: up.id, webViewLink: up.webViewLink } : b;
+            };
+            return {
+              ...t,
+              berkas: (t.berkas || []).map(updateBerkas),
+              lainnya: (t.lainnya || []).map(updateLain),
+            };
+          });
+          tulisKegiatanTambahan(nextLinks);
+
+          setModalTambah(false);
+          resetFormTambah();
+          muatData(); // muat ulang tabel agar folder/berkas baru ikut terlihat
+          tampilkanToast(
+            `✓ Impor kegiatan "${kode}" disimpan & ${files.length} berkas terunggah ke Drive.`
+          );
+        } catch (err) {
+          console.error("Gagal mengunggah berkas:", err);
+          setStatusUpload(`Gagal: ${err.message}`);
+          tampilkanToast(
+            `Data kegiatan "${kode}" tersimpan, tetapi unggah gagal: ${err.message}`
+          );
+        } finally {
+          setSantaiUpload(false);
+        }
+        return;
+      }
+    }
 
     const baru = {
       kode,
-      nama: formTambah.nama.trim(),
-      pagu: Number(formTambah.pagu) || 0,
-      realisasi: Number(formTambah.realisasi) || 0,
+      nama,
+      pagu: 0,
+      realisasi: 0,
       tanggal: tanggalHariIni(),
     };
     const next = [...tambahan.filter((t) => t.kode !== baru.kode), baru];
     setTambahan(next);
     tulisKegiatanTambahan(next);
-
-    /* ── Bila ada PDF, unggah ke folder kegiatan di Google Drive ── */
-    if (fileTambah) {
-      setSantaiUpload(true);
-      setStatusUpload("Menyiapkan koneksi ke Google Drive…");
-      try {
-        let token = bacaToken();
-        if (!token) {
-          setStatusUpload("Silakan login dengan akun Google Anda…");
-          token = await mintaTokenAkses();
-          simpanToken(token);
-        }
-        setStatusUpload("Mencari folder kegiatan di Drive…");
-        const { folder, dibuat } = await siapkanFolderKegiatan(
-          token,
-          baru.kode,
-          baru.nama
-        );
-        setStatusUpload(
-          dibuat
-            ? "Folder kegiatan dibuat di Drive. Mengunggah PDF…"
-            : "Folder kegiatan ditemukan. Mengunggah PDF…"
-        );
-        const induk = subFolderRekening || folder.id;
-        const hasil = await unggahBerkasDrive(token, induk, fileTambah);
-
-        setModalTambah(false);
-        resetFormTambah();
-        muatData(); // muat ulang tabel agar folder/berkas baru ikut terlihat
-        tampilkanToast(
-          `✓ Data kegiatan "${baru.kode}" disimpan & PDF ` +
-            `"${hasil.name || fileTambah.name}" terunggah ke Drive.`
-        );
-      } catch (err) {
-        console.error("Gagal mengunggah PDF:", err);
-        setStatusUpload(`Gagal: ${err.message}`);
-        tampilkanToast(
-          `Data kegiatan "${baru.kode}" tersimpan, tetapi unggah PDF gagal: ${err.message}`
-        );
-      } finally {
-        setSantaiUpload(false);
-      }
-      return;
-    }
-
     setModalTambah(false);
     resetFormTambah();
     tampilkanToast(`✓ Data kegiatan "${baru.kode}" berhasil ditambahkan.`);
@@ -1370,7 +2277,9 @@ export default function DataKegiatan() {
             <span className="dk-live-dot" />
             {loading
               ? `Mengambil data… ${progress}/${rows.length || "?"}`
-              : `Live Google Drive · ${semuaRows.length} kegiatan`}
+              : menyegarkan
+              ? `Menyegarkan dari Drive… ${progress}/${rows.length || "?"}`
+              : `Google Drive · ${semuaRows.length} kegiatan`}
           </div>
         </div>
       </div>
@@ -1381,9 +2290,17 @@ export default function DataKegiatan() {
           <input
             type="text"
             className="dk-input"
-            placeholder="Cari kode / kegiatan..."
+            placeholder="Cari kode / nama kegiatan..."
+            title="Cari berdasarkan kode atau nama kegiatan, termasuk KODE LENGKAP (contoh: 7769.AFA.001.100.A.521211). Titik dan spasi diabaikan."
             value={draft.cari}
-            onChange={(e) => setDraft({ ...draft, cari: e.target.value })}
+            onChange={(e) => {
+              /* Pencarian langsung berjalan saat mengetik — tidak perlu
+                 menekan Filter lebih dulu. Filter bulan tetap diterapkan
+                 lewat tombol Filter/Enter. */
+              const cari = e.target.value;
+              setDraft((d) => ({ ...d, cari }));
+              setApplied((a) => ({ ...a, cari }));
+            }}
             onKeyDown={(e) => e.key === "Enter" && setApplied(draft)}
           />
           <label className="dk-date-wrap">
@@ -1451,6 +2368,139 @@ export default function DataKegiatan() {
         </div>
       </div>
 
+      {/* ── Panduan filter bulan ──────────────────────────────────
+          Menampilkan bulan-bulan yang benar-benar punya data (chips)
+          dan ringkasan data yang lolos filter bulan aktif, supaya
+          jelas data mana yang terhubung dengan bulan yang dipilih. */}
+      {(bulanTersedia.length > 0 || filterBulanAktif) && (
+        <div className="dk-filter-bulan">
+          <div className="dk-filter-bulan-chips">
+            <span className="dk-filter-bulan-lead">Bulan dengan data:</span>
+            {bulanTersedia.length === 0 ? (
+              <span className="dk-kosong">
+                Belum ada data bertanggal untuk dipetakan ke bulan.
+              </span>
+            ) : (
+              bulanTersedia.map((b) => {
+                const aktif = applied.dari === b.bulan && applied.sampai === b.bulan;
+                return (
+                  <button
+                    key={b.bulan}
+                    type="button"
+                    className={`dk-chip-bulan${aktif ? " dk-chip-bulan-aktif" : ""}`}
+                    onClick={() => pilihBulan(b.bulan)}
+                    title={`${b.jumlah} kegiatan · ${formatRupiah(b.realisasi)} · ${b.berkas} berkas${
+                      aktif ? " · klik untuk melepas filter bulan ini" : " · klik untuk memfilter bulan ini"
+                    }`}
+                  >
+                    {labelBulan(b.bulan)}
+                    <span className="dk-chip-count">{b.jumlah}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          {filterBulanAktif && (
+            <div className="dk-filter-bulan-ringkas">
+              <div className="dk-fbr-baris">
+                <span>
+                  Terhubung ke{" "}
+                  <strong>
+                    {applied.dari && applied.sampai && applied.dari !== applied.sampai
+                      ? `${labelBulan(applied.dari)} – ${labelBulan(applied.sampai)}`
+                      : labelBulan(applied.dari || applied.sampai)}
+                  </strong>
+                  :
+                </span>
+                <span>
+                  <strong>{ringkasBulan.jumlah}</strong> kegiatan
+                </span>
+                <span>
+                  realisasi <strong>{formatRupiah(ringkasBulan.realisasi)}</strong>
+                </span>
+                <span>
+                  <strong>{ringkasBulan.berkas}</strong> bukti kerja
+                </span>
+                {ringkasBulan.jumlah === 0 && (
+                  <span className="dk-kosong">
+                    Tidak ada kegiatan bertanggal pada bulan ini.
+                  </span>
+                )}
+              </div>
+
+              {/* Laporan SPM sesuai tab pada spreadsheet
+                  "Rekap SPM kumulatif per bulan". */}
+              <div className="dk-fbr-spm">
+                <span className="dk-fbr-spm-lead">
+                  Laporan SPM (spreadsheet):
+                </span>
+                {laporanSpmBulan.ada || ledgerSpm ? (
+                  <>
+                    <span
+                      title={`Sumber: tab "${ledgerTabNama}" pada spreadsheet "Rekap SPM kumulatif per bulan.xlsx" — jumlah seluruh baris SPM pada tab tersebut`}
+                    >
+                      kumulatif s.d. {laporanSpmBulan.bulanDasar}:{" "}
+                      <strong>
+                        {formatRupiah(
+                          ledgerSpm ? ledgerSpm.total : laporanSpmBulan.total
+                        )}
+                      </strong>
+                    </span>
+                    <span title="Selisih kumulatif bulan ini dengan bulan sebelumnya">
+                      realisasi bulan ini:{" "}
+                      <strong>
+                        {formatRupiah(
+                          ledgerSpm ? ledgerBulanIni.nilai : laporanSpmBulan.bulanIni
+                        )}
+                      </strong>
+                      {ledgerSpm ? ` (${ledgerBulanIni.jumlah} SPM)` : ""}
+                    </span>
+                    <span className="dk-infobar-tag">
+                      {ledgerTabNama || laporanSpmBulan.dasar[laporanSpmBulan.dasar.length - 1].tab}
+                    </span>
+                  </>
+                ) : (
+                  <span className="dk-kosong">
+                    Bulan {labelBulan(applied.sampai || applied.dari)} belum
+                    punya data di spreadsheet rekap SPM — dianggap kosong.
+                  </span>
+                )}
+              </div>
+
+              {/* Daftar bukti kerja SPM (PDF Drive) sesuai bulan terpilih. */}
+              <div className="dk-fbr-berkas">
+                <button
+                  type="button"
+                  className="dk-btn dk-btn-spm"
+                  onClick={() =>
+                    setModalSpm({
+                      label: periodeFilterLabel,
+                      tab: ledgerTabNama,
+                      baris: ledgerBarisPeriode.map((r) => ({
+                        no: r.noSpm,
+                        rek: r.rekening,
+                        tgl: r.tanggal,
+                        nilai: r.nilai,
+                        uraian: r.uraian,
+                        kode: r.kegiatanKode,
+                      })),
+                      total: ledgerPeriodeTotal,
+                    })
+                  }
+                  disabled={ledgerBarisPeriode.length === 0}
+                  title={`Lihat ${ledgerBarisPeriode.length} bukti laporan SPM pada rentang ${periodeFilterLabel}`}
+                >
+                  📎 Bukti Laporan SPM: {ledgerBarisPeriode.length} SPM
+                  {ledgerBarisPeriode.length > 0
+                    ? ` · ${formatRupiah(ledgerPeriodeTotal)}`
+                    : ""}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Info bar ── */}
       <div className="dk-infobar">
         Menampilkan <strong>{tabelRows.length}</strong> dari{" "}
@@ -1465,7 +2515,7 @@ export default function DataKegiatan() {
           {rekapSheet && <span className="dk-infobar-tag">Spreadsheet</span>}
         </span>
         {rekapSheet && (
-          <span title={`Sumber: spreadsheet "${SHEET_TAB_REKAP}" · ${rekapSheet.rekening} kode rekening`}>
+          <span title={`Sumber: tab rekap kumulatif terbaru di spreadsheet Drive · ${rekapSheet.rekening} kode rekening`}>
             Total Rekap Kumulatif:{" "}
             <strong>{formatRupiah(rekapSheet.total || 0)}</strong>
           </span>
@@ -1493,38 +2543,137 @@ export default function DataKegiatan() {
           )}
         </span>
         <span>
-          Persentase:{" "}
-          <strong style={{ color: persenColor(hitungPersen(totalRealisasi, totalPagu)) }}>
-            {hitungPersen(totalRealisasi, totalPagu).toFixed(2)}%
-          </strong>
-        </span>
-        <span>
           Bukti Kerja: <strong>{totalBerkas} berkas</strong>
         </span>
+        {/* Status sumber data: cache (tampil segera) vs sedang menyegarkan
+            dari Drive. Tanpa cache, tabel menunggu Drive selesai. */}
+        <span
+          className="dk-infobar-status"
+          title={
+            menyegarkan
+              ? "Menyegarkan data dari Google Drive di belakang layar — tabel tetap bisa dipakai."
+              : cacheDipakai
+              ? "Data ditampilkan dari simpanan terakhir (tidak membaca Drive lagi)."
+              : "Data hasil pembacaan terbaru dari Google Drive."
+          }
+        >
+          {menyegarkan ? (
+            <>
+              <span className="dk-dot dk-dot-loading" /> Menyegarkan…
+            </>
+          ) : cacheDipakai ? (
+            <>
+              <span className="dk-dot dk-dot-cache" /> Data tersimpan
+              {terakhirMuat ? ` · ${waktuRelatif(terakhirMuat)}` : ""}
+            </>
+          ) : (
+            <>
+              <span className="dk-dot dk-dot-live" /> Terbaru
+            </>
+          )}
+        </span>
+        <button
+          type="button"
+          className="dk-btn dk-btn-refresh"
+          onClick={() => muatData()}
+          disabled={menyegarkan}
+          title="Baca ulang data terbaru dari Google Drive"
+        >
+          ↻ Muat Ulang
+        </button>
       </div>
 
       {/* ── Tabel ── */}
       <div className="dk-table-wrap">
-        <table className="dk-table">
+        {filterTabelDatar ? (
+          /* Mode filter: baris datar (level kode akun belanja) —
+             tidak ada baris induk/cabang/detail, tidak perlu dibuka. */
+          <table className="dk-table">
+            <thead>
+              <tr>
+                <th style={{ minWidth: 240 }}>Kode Lengkap</th>
+                <th>Uraian</th>
+                <th style={{ textAlign: "right", minWidth: 140 }}>
+                  Realisasi
+                </th>
+                <th style={{ textAlign: "center", width: 120 }}>Tanggal</th>
+                <th style={{ minWidth: 200 }}>No. SPM</th>
+                <th style={{ textAlign: "center", minWidth: 130 }}>
+                  Bukti PDF
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {barisFilter.length > 0 ? (
+                barisFilter.map((b) => (
+                  <tr key={b.kode} className="dk-row dk-row-kegiatan">
+                    <td className="dk-kode-cell">
+                      <span className="dk-kode">{b.kode}</span>
+                    </td>
+                    <td>
+                      <span className="dk-kegiatan" title={b.kegiatan}>
+                        {b.kegiatan}
+                      </span>
+                      <span className="dk-sub">{b.uraian}</span>
+                    </td>
+                    <td className="dk-num">{formatRupiah(b.realisasi)}</td>
+                    <td className="dk-tanggal">{isoToTglId(b.tanggal)}</td>
+                    <td className="dk-spm-nomor">
+                      {b.spm.length ? b.spm.join(", ") : "—"}
+                    </td>
+                    <td className="dk-bukti">
+                      {b.jumlahPdf > 0 ? (
+                        <button
+                          type="button"
+                          className="dk-btn-dok"
+                          onClick={() =>
+                            setModalSpm({
+                              label: periodeFilterLabel,
+                              kode: b.kode,
+                              nama: b.kegiatan,
+                              tab: ledgerTabNama,
+                              baris: [],
+                              total: 0,
+                              pdf: b.pdf,
+                              pdfTanpaTanggal: b.pdfTanpaTanggal,
+                              pdfLainnya: b.pdfLainnya,
+                            })
+                          }
+                          title={`Lihat ${b.jumlahPdf} berkas SPM di Google Drive`}
+                        >
+                          📎 {b.jumlahPdf} berkas
+                        </button>
+                      ) : (
+                        <span className="dk-kosong">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="dk-empty">
+                    {loading
+                      ? "Mengambil data kegiatan dari Google Drive..."
+                      : applied.cari.trim()
+                      ? `Tidak ada data yang cocok dengan pencarian "${applied.cari.trim()}". Coba kode kegiatan (contoh: 7769 atau 7769.AFA) atau kode lengkap dengan akun belanja (contoh: 7769.AFA.001.100.A.521211).`
+                      : "Tidak ada kegiatan yang cocok dengan filter."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        ) : (
+          <table className="dk-table">
           <thead>
             <tr>
               <th style={{ minWidth: 150 }}>Kode</th>
               <th>Kegiatan</th>
-              <th
-                style={{ textAlign: "right", minWidth: 130 }}
-                title="Pagu bidang (SDA/CKPS/UPTU) — dibaca live dari tab pertama spreadsheet rekap"
-              >
-                Pagu
-              </th>
+
               <th style={{ textAlign: "right", minWidth: 130 }}>Realisasi</th>
-              <th
-                style={{ textAlign: "right", width: 110 }}
-                title="Persentase realisasi terhadap pagu bidang (SDA/CKPS/UPTU)"
-              >
-                %
-              </th>
               <th style={{ textAlign: "center", width: 110 }}>Tanggal</th>
-              <th style={{ textAlign: "center", width: 130 }}>Bukti Kerja</th>
+              <th style={{ textAlign: "center", minWidth: 200 }}>
+                Bukti Kerja{filterBulanAktif ? ` · ${periodeFilterLabel}` : ""}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -1580,10 +2729,29 @@ export default function DataKegiatan() {
                             Kode Akun Belanja
                           </span>
                           <span className="dk-sub">
-                            {n.jumlahUnik || 0} SPM unik
-                            {n.jumlahSalinan
-                              ? ` · ${n.jumlahSalinan} salinan`
-                              : ""}
+                            {(() => {
+                              /* Pecahan badge 📎 "N berkas · Rp X" pada
+                                 baris Kegiatan induknya, masuk ke kode
+                                 belanja ini (diharapkan sesuai rekening
+                                 pada baris ledger — sumber badge). */
+                              const per = buktiPerRekening.get(
+                                kunciKode(n.induk)
+                              );
+                              const e = per
+                                ? per.get(String(n.kode).trim())
+                                : null;
+                              return (
+                                `${n.jumlahUnik || 0} SPM unik` +
+                                (n.jumlahSalinan
+                                  ? ` · ${n.jumlahSalinan} salinan`
+                                  : "") +
+                                (e
+                                  ? ` · ${e.jumlah} berkas · ${formatRupiah(
+                                      e.total
+                                    )}`
+                                  : "")
+                              );
+                            })()}
                           </span>
                         </>
                       ) : (
@@ -1601,26 +2769,7 @@ export default function DataKegiatan() {
                       )}
                     </td>
 
-                    <td className="dk-num">
-                      {n.pagu ? (
-                        <span
-                          title={
-                            n.bidang
-                              ? `Pagu bidang ${n.bidang} — dari spreadsheet rekap`
-                              : undefined
-                          }
-                        >
-                          {formatRupiah(n.pagu)}
-                        </span>
-                      ) : (
-                        <span
-                          className="dk-kosong"
-                          title="Pagu bidang belum tersedia untuk kegiatan ini"
-                        >
-                          —
-                        </span>
-                      )}
-                    </td>
+
                     <td
                       className="dk-num"
                       title={
@@ -1634,53 +2783,193 @@ export default function DataKegiatan() {
                     >
                       {formatRupiah(n.realisasi)}
                     </td>
-                    <td
-                      className="dk-num dk-persen"
-                      title={
-                        n.tipe === "akun"
-                          ? "Persentase realisasi kode akun terhadap pagu kegiatan"
-                          : undefined
-                      }
-                    >
-                      {n.pagu || n.persen > 0 ? (
-                        <>
-                          <span style={{ color: persenColor(n.persen) }}>
-                            {n.persen.toFixed(2)}%
-                          </span>
-                          <span className="dk-mini-bar">
-                            <span
-                              style={{
-                                width: `${Math.max(0, Math.min(100, n.persen))}%`,
-                                background: persenColor(n.persen),
-                              }}
-                            />
-                          </span>
-                        </>
-                      ) : (
-                        <span className="dk-kosong">—</span>
-                      )}
-                    </td>
                     <td className="dk-tanggal">{isoToTglId(n.tanggal)}</td>
                     <td className="dk-bukti">
-                      {n.jumlahBerkas > 0 ? (
-                        <button
-                          type="button"
-                          className="dk-btn-dok"
-                          onClick={() => setModalBerkas(n)}
-                          title={
-                            n.salinan && n.salinan.length > 0
-                              ? `Lihat daftar bukti kerja (SPM) — ${n.salinan.length} salinan tidak dihitung`
-                              : "Lihat daftar bukti kerja (SPM)"
+                      {(() => {
+                        /* Tombol ringkas → modal berisi tabel bukti laporan
+                           SPM (dari ledger spreadsheet "Rekap SPM kumulatif
+                           per bulan"; bila kegiatan tidak ada di ledger,
+                           dipakai berkas PDF Drive yang bertanggal). */
+                        if (n.tipe === "akun") {
+                          /* Baris Kode Akun Belanja: badge 📎 berisi jumlah
+                             bukti PDF tersimpan. Diklik → modal ringkasan
+                             nilai SPM + daftar bukti PDF kode belanja ini. */
+                          const rek = String(n.kode || "").trim();
+                          const blok = ledgerTerpilihPilih(n.induk);
+                          const daftar = blok
+                            ? blok.rows
+                                .filter(
+                                  (r) =>
+                                    String(r.rekening || "").trim() === rek
+                                )
+                                .map((r) => ({
+                                  no: r.noSpm,
+                                  rek: r.rekening,
+                                  tgl: r.tanggal,
+                                  nilai: r.nilai,
+                                  uraian: r.uraian,
+                                }))
+                            : (n.berkas || []).map((b) => ({
+                                no: b.spm.noSpm,
+                                rek: b.spm.rekening,
+                                tgl: b.spm.tanggal,
+                                nilai: b.spm.nilai,
+                                uraian: b.name,
+                                link: b.webViewLink,
+                              }));
+                          const tanpa = (n.berkas || []).filter(
+                            (b) => b.spm && !b.spm.tanggal
+                          );
+                          const lain = n.lainnya || [];
+                          const total = daftar.reduce(
+                            (s, r) => s + (r.nilai || 0),
+                            0
+                          );
+                          const jumlah = daftar.length + tanpa.length + lain.length;
+                          if (!jumlah) {
+                            return <span className="dk-kosong">—</span>;
                           }
-                        >
-                          📎 {n.jumlahBerkas} berkas
-                        </button>
-                      ) : n.link ? (
-                        <span className="dk-kosong">Belum ada</span>
-                      ) : (
-                        <span className="dk-kosong">—</span>
-                      )}
-                      {n.link && (
+                          return (
+                            <button
+                              type="button"
+                              className="dk-btn-dok"
+                              onClick={() => {
+                                const liveKey = `akun:${n.induk}:${rek}`;
+                                setModalSpm({
+                                  label: periodeFilterLabel,
+                                  kode: n.induk,
+                                  nama: n.nama,
+                                  tab: ledgerTabNama,
+                                  baris: daftar,
+                                  total,
+                                  liveKey,
+                                  pdf: (n.berkas || [])
+                                    .filter((b) => b.spm && b.spm.tanggal)
+                                    .map((b) => ({
+                                      no: b.spm.noSpm,
+                                      rek: b.spm.rekening,
+                                      nilai: b.spm.nilai,
+                                      tgl: b.spm.tanggal,
+                                      nama: b.name,
+                                      link: b.webViewLink,
+                                    })),
+                                  pdfTanpaTanggal: tanpa,
+                                  pdfLainnya: lain,
+                                  rekening: n.link
+                                    ? [
+                                        {
+                                          kode: n.kode,
+                                          nama: n.nama,
+                                          jumlah: n.jumlahBerkas,
+                                          id: n.folderId,
+                                          link: n.link,
+                                        },
+                                      ]
+                                    : [],
+                                });
+                                /* Lengkapi berkas langsung dari Drive. */
+                                muatBuktiSpmLive(liveKey, [
+                                  { kode: rek, id: n.folderId, link: n.link },
+                                ]);
+                              }}
+                              title={`Lihat ${jumlah} bukti laporan SPM — ${formatRupiah(
+                                total
+                              )}`}
+                            >
+                              📎 {n.jumlahBerkas || jumlah} berkas
+                            </button>
+                          );
+                        }
+                        if (n.tipe !== "kegiatan") {
+                          return <span className="dk-kosong">—</span>;
+                        }
+                        const blok = ledgerTerpilihPilih(n.kode);
+                        const daftar = berkasPerKegiatan.get(n.kode) || [];
+                        const tanpaTanggal = (n.berkas || []).filter(
+                          (b) => b.spm && !b.spm.tanggal
+                        );
+                        const lainnya = n.lainnya || [];
+                        const baris = blok
+                          ? blok.rows.map((r) => ({
+                              no: r.noSpm,
+                              rek: r.rekening,
+                              tgl: r.tanggal,
+                              nilai: r.nilai,
+                              uraian: r.uraian,
+                            }))
+                          : daftar.map((b) => ({
+                              no: b.spm.noSpm,
+                              rek: b.spm.rekening,
+                              tgl: b.spm.tanggal,
+                              nilai: b.spm.nilai,
+                              uraian: b.name,
+                              link: b.webViewLink,
+                            }));
+                        const jumlahPdf =
+                          daftar.length + tanpaTanggal.length + lainnya.length;
+                        if (!baris.length && !jumlahPdf) {
+                          return <span className="dk-kosong">—</span>;
+                        }
+                        const total = baris.reduce(
+                          (s, r) => s + (r.nilai || 0),
+                          0
+                        );
+                        return (
+                          <button
+                            type="button"
+                            className={`dk-btn-dok${
+                              filterBulanAktif ? " dk-btn-dok-bulan" : ""
+                            }`}
+                            onClick={() => {
+                              const liveKey = `kegiatan:${n.kode}`;
+                              setModalSpm({
+                                label: periodeFilterLabel,
+                                kode: n.kode,
+                                nama: n.nama,
+                                tab: ledgerTabNama,
+                                baris,
+                                total,
+                                liveKey,
+                                /* Bukti PDF di Drive (tautan ke berkas). */
+                                pdf: (n.berkas || [])
+                                  .filter((b) => b.spm && b.spm.tanggal)
+                                  .map((b) => ({
+                                    no: b.spm.noSpm,
+                                    rek: b.spm.rekening,
+                                    nilai: b.spm.nilai,
+                                    tgl: b.spm.tanggal,
+                                    nama: b.name,
+                                    link: b.webViewLink,
+                                  })),
+                                pdfTanpaTanggal: (n.berkas || []).filter(
+                                  (b) => b.spm && !b.spm.tanggal
+                                ),
+                                pdfLainnya: n.lainnya || [],
+                                /* Folder kode akun belanja yang ada di Drive
+                                   (folder anak kegiatan) — dipakai untuk
+                                   memecah bukti per kode belanja. */
+                                rekening: n.rekening || [],
+                              });
+                              /* Lengkapi berkas langsung dari Drive: folder
+                                 kegiatan (berkas di luar sub-folder) + semua
+                                 folder rekeningnya. */
+                              muatBuktiSpmLive(liveKey, [
+                                { kode: "", id: n.folderId, link: n.link },
+                                ...(n.rekening || []).map((k) => ({
+                                  kode: k.kode,
+                                  id: k.id,
+                                  link: k.link,
+                                })),
+                              ]);
+                            }}
+                            title={`Lihat ${baris.length} bukti laporan SPM — ${formatRupiah(total)}${jumlahPdf ? ` · ${jumlahPdf} berkas PDF di Drive` : ""}`}
+                          >
+                            📎 {baris.length || jumlahPdf} berkas
+                            {baris.length ? ` · ${formatRupiah(total)}` : ""}
+                          </button>
+                        );
+                      })()}
+                      {n.tipe !== "akun" && n.link && (
                         <a
                           className="dk-link-drive"
                           href={n.link}
@@ -1707,7 +2996,7 @@ export default function DataKegiatan() {
               })
             ) : (
               <tr>
-                <td colSpan={7} className="dk-empty">
+                <td colSpan={6} className="dk-empty">
                   {loading
                     ? "Mengambil data kegiatan dari Google Drive..."
                     : adaFilter
@@ -1718,6 +3007,7 @@ export default function DataKegiatan() {
             )}
           </tbody>
         </table>
+        )}
       </div>
 
       {error && <div className="alert alert-danger dk-alert">{error}</div>}
@@ -1733,133 +3023,329 @@ export default function DataKegiatan() {
         <code>SPM [no]_[rekening]_[tanggal]_[nilai]</code>).
       </p>
 
-      {/* ── Modal: daftar bukti kerja ── */}
-      {modalBerkas && (
-        <div className="modal-overlay" onClick={() => setModalBerkas(null)}>
+      {/* ── Modal: bukti laporan SPM ── */}
+      {modalSpm && (
+        <div className="modal-overlay" onClick={() => setModalSpm(null)}>
           <div
             className="modal-box"
-            style={{ maxWidth: 720 }}
+            style={{ maxWidth: 820 }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
               <h4>
-                Bukti Kerja — {modalBerkas.kode}
-                {modalBerkas.nama ? ` · ${modalBerkas.nama}` : ""}
-                {modalBerkas.tipe ? ` (${LABEL_LEVEL[modalBerkas.tipe]})` : ""}
+                Bukti Laporan SPM
+                {modalSpm.label ? ` — ${modalSpm.label}` : ""}
+                {modalSpm.kode ? ` · ${modalSpm.kode}` : ""}
+                <span className="dk-muted">
+                  {" "}
+                  · {modalSpm.baris.length} SPM
+                  {modalSpm.tab ? ` (tab ${modalSpm.tab})` : ""}
+                </span>
               </h4>
               <button
                 className="modal-close-btn"
-                onClick={() => setModalBerkas(null)}
+                onClick={() => setModalSpm(null)}
               >
                 ✕
               </button>
             </div>
+            {/* Status pemuatan ulang berkas langsung dari Google Drive. */}
+            {modalSpmLive && (
+              <div
+                className={`dk-modal-live${
+                  modalSpmLive.galat ? " dk-modal-live-galat" : ""
+                }`}
+              >
+                {modalSpmLive.memuat ? (
+                  <>⟳ Memuat berkas terbaru dari Google Drive…</>
+                ) : modalSpmLive.galat ? (
+                  <>
+                    ⚠ Gagal memuat data terbaru ({modalSpmLive.galat}) —
+                    menampilkan data tersimpan.
+                  </>
+                ) : modalSpmLive.waktu ? (
+                  <>
+                    ● Realtime — {modalSpmLive.jumlahBerkas} berkas diperiksa
+                    {modalSpmLive.salinan
+                      ? ` · ${modalSpmLive.salinan} salinan`
+                      : ""}{" "}
+                    · diperbarui{" "}
+                    {new Date(modalSpmLive.waktu).toLocaleTimeString("id-ID", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
+                  </>
+                ) : null}
+              </div>
+            )}
             <div className="modal-body" style={{ padding: 0 }}>
-              {modalBerkas.berkas && modalBerkas.berkas.length > 0 && (
-                <table className="dk-table dk-table-modal">
-                <thead>
-                  <tr>
-                    <th>No. SPM</th>
-                    <th>Rekening</th>
-                    <th style={{ textAlign: "right" }}>Nilai</th>
-                    <th style={{ textAlign: "center" }}>Tanggal</th>
-                    <th style={{ textAlign: "right" }}>Ukuran</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(modalBerkas.berkas || []).map((b) => (
-                    <tr key={b.id}>
-                      <td>
-                        <a
-                          href={b.webViewLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={b.name}
-                        >
-                          {b.spm.noSpm}
-                        </a>
-                      </td>
-                      <td>
-                        {b.spm.rekening} · {namaRekening(b.spm.rekening)}
-                      </td>
-                      <td className="dk-num">{formatRupiah(b.spm.nilai)}</td>
-                      <td className="dk-tanggal">
-                        {isoToTglId(b.spm.tanggal)}
-                      </td>
-                      <td className="dk-num dk-muted">
-                        {formatBytes(b.size)}
-                      </td>
-                    </tr>
-                  ))}
-                  </tbody>
-                </table>
+              {modalSpm.baris.length === 0 &&
+              !(modalSpm.pdf || []).length &&
+              !(modalSpm.pdfLainnya || []).length ? (
+                <p className="dk-modal-kosong">
+                  Belum ada bukti laporan SPM pada rentang ini.
+                </p>
+              ) : null}
+              {/* Bukti laporan SPM dipecah per KODE AKUN BELANJA sesuai
+                  folder yang ada di Google Drive — jadi tidak lagi
+                  digabung di bawah Kode Kegiatan. */}
+              {modalSpm.nama && (
+                <div className="dk-modal-subhead">{modalSpm.nama}</div>
               )}
-              {modalBerkas.lainnya && modalBerkas.lainnya.length > 0 && (
+              <div className="dk-modal-scroll">
+                {(() => {
+                  const normNo = (s) =>
+                    String(s || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+                  /* Berkas PDF jadi sumber utama (primary); SPM dari
+                     spreadsheet yang sudah punya berkas tidak diulang. */
+                  const pdfNorm = new Set();
+                  const pdfKunci = new Set();
+                  (modalSpm.pdf || []).forEach((b) => {
+                    pdfNorm.add(normNo(b.no));
+                    pdfKunci.add(`${b.rek}|${b.tgl}|${b.nilai}`);
+                  });
+                  const grup = new Map();
+                  const ambil = (rek) => {
+                    const kunci = String(rek || "—").trim() || "—";
+                    if (!grup.has(kunci)) grup.set(kunci, []);
+                    return grup.get(kunci);
+                  };
+                  (modalSpm.pdf || []).forEach((b) => ambil(b.rek).push(b));
+                  /* Berkas yang namanya tidak sesuai pola: cocokkan nomor
+                     SPM-nya dengan baris spreadsheet. Bila cocok, baris itu
+                     yang diberi tautan PDF (tanggal & nilai tetap lengkap),
+                     bukan tampil sebagai berkas "tanpa nilai". */
+                  const lainTersisa = new Map(); // `${rek}|${no}` → berkas[]
+                  (modalSpm.pdfLainnya || []).forEach((b) => {
+                    const m = String(b.name || "").match(/SPM\s*[_-]?\s*(\d+)/i);
+                    const rek = String(b.rekening || "").trim() || "—";
+                    if (m) {
+                      const kunci = `${rek}|${normNo(m[1])}`;
+                      if (!lainTersisa.has(kunci)) lainTersisa.set(kunci, []);
+                      lainTersisa.get(kunci).push(b);
+                    } else {
+                      ambil(rek).push({
+                        no: b.name,
+                        tgl: null,
+                        nilai: null,
+                        nama: b.name,
+                        link: b.webViewLink,
+                        berkasLain: true,
+                      });
+                    }
+                  });
+                  (modalSpm.baris || []).forEach((r) => {
+                    if (
+                      pdfNorm.has(normNo(r.no)) ||
+                      pdfKunci.has(`${r.rek}|${r.tgl}|${r.nilai}`)
+                    )
+                      return;
+                    const rek = String(r.rek || "").trim() || "—";
+                    const cocok = lainTersisa.get(`${rek}|${normNo(r.no)}`);
+                    const berkas = cocok && cocok.length ? cocok.shift() : null;
+                    ambil(r.rek).push(
+                      berkas
+                        ? {
+                            ...r,
+                            link: berkas.webViewLink,
+                            nama: berkas.name,
+                          }
+                        : r
+                    );
+                  });
+                  /* Sisa berkas yang nomor SPM-nya tidak ada di spreadsheet. */
+                  lainTersisa.forEach((daftar, kunci) => {
+                    const rek = kunci.split("|")[0];
+                    daftar.forEach((b) => {
+                      ambil(rek).push({
+                        no: b.name,
+                        tgl: null,
+                        nilai: null,
+                        nama: b.name,
+                        link: b.webViewLink,
+                        berkasLain: true,
+                      });
+                    });
+                  });
+                  /* Folder kode akun belanja di Drive (folder anak
+                     kegiatan) — untuk urutan dan tautan ke foldernya. */
+                  const folder = new Map(
+                    (modalSpm.rekening || []).map((k) => [
+                      String(k.kode || "—").trim(),
+                      k,
+                    ])
+                  );
+                  return [...grup.entries()]
+                    .sort((a, b) => a[0].localeCompare(b[0], "id"))
+                    .map(([rek, daftar], gi) => {
+                      const f = folder.get(rek);
+                      const totalGrup = daftar.reduce(
+                        (a, b) => a + (b.nilai || 0),
+                        0
+                      );
+                      return (
+                        <div key={rek} className="dk-grup-belanja">
+                          <div className="dk-grup-belanja-head">
+                            <span className="dk-kode">{rek}</span>
+                            <span className="dk-grup-belanja-nama">
+                              {namaRekening(rek)}
+                            </span>
+                            <span className="dk-level-tag dk-level-tag-akun">
+                              Kode Akun Belanja
+                            </span>
+                            <span className="dk-sub">
+                              {daftar.length} berkas · total{" "}
+                              {formatRupiah(totalGrup)}
+                              {daftar.some((b) => b.berkasLain)
+                                ? ` · ${
+                                    daftar.filter((b) => b.berkasLain).length
+                                  } tanpa nilai SPM`
+                                : ""}
+                            </span>
+                            {f && f.link && (
+                              <a
+                                className="dk-link-drive"
+                                href={f.link}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Buka folder di Google Drive"
+                              >
+                                ↗
+                              </a>
+                            )}
+                          </div>
+                          <table className="dk-table dk-table-modal">
+                            <thead>
+                              <tr>
+                                <th>No. SPM / Berkas</th>
+                                {!modalSpm.kode && <th>Kegiatan</th>}
+                                <th style={{ textAlign: "center" }}>
+                                  Tanggal
+                                </th>
+                                <th style={{ textAlign: "right" }}>Nilai</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {daftar.map((b, i) => (
+                                <tr key={`${b.no}-${gi}-${i}`}>
+                                  <td>
+                                    {b.link ? (
+                                      <a
+                                        href={b.link}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        title={b.nama || b.uraian}
+                                      >
+                                        {b.berkasLain && b.no.length > 70
+                                          ? `${b.no.slice(0, 70)}…`
+                                          : b.no}
+                                      </a>
+                                    ) : b.berkasLain && b.no.length > 70 ? (
+                                      `${b.no.slice(0, 70)}…`
+                                    ) : (
+                                      b.no
+                                    )}
+                                  </td>
+                                  {!modalSpm.kode && (
+                                    <td>
+                                      <span className="dk-kode">
+                                        {b.kode || "—"}
+                                      </span>
+                                    </td>
+                                  )}
+                                  <td className="dk-tanggal">
+                                    {b.tgl ? isoToTglId(b.tgl) : "—"}
+                                  </td>
+                                  <td className="dk-num">
+                                    {b.nilai == null
+                                      ? "—"
+                                      : formatRupiah(b.nilai)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    });
+                })()}
+              </div>
+
+              {(modalSpm.pdfTanpaTanggal || []).length > 0 && (
                 <>
                   <div className="dk-modal-subhead">
-                    Berkas lain ({modalBerkas.lainnya.length}) — nama tidak
-                    sesuai pola SPM, tidak dihitung ke realisasi
+                    SPM tanpa tanggal terbaca ({modalSpm.pdfTanpaTanggal.length})
+                    — nama berkas tidak mengikuti pola{" "}
+                    <code>SPM_no_rekening_ddmmyy_nilai</code>, sehingga bulan
+                    terbitnya tidak bisa dipastikan.
                   </div>
-                  <table className="dk-table dk-table-modal">
+                  <div className="dk-modal-scroll">
+                    <table className="dk-table dk-table-modal">
                     <thead>
                       <tr>
-                        <th>Nama Berkas</th>
-                        <th>Rekening</th>
-                        <th style={{ textAlign: "right" }}>Ukuran</th>
-                        <th style={{ textAlign: "center" }}>Tanggal</th>
+                        <th>No. SPM</th>
+                        <th style={{ textAlign: "right" }}>Nilai</th>
+                        <th>Nama berkas</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {modalBerkas.lainnya.map((b) => (
-                        <tr key={b.id}>
+                      {modalSpm.pdfTanpaTanggal.map((b, i) => (
+                        <tr key={b.id || i}>
                           <td>
                             <a
                               href={b.webViewLink}
                               target="_blank"
                               rel="noreferrer"
-                              title={b.name}
+                              title="Buka PDF di Drive"
                             >
-                              {b.name}
+                              SPM {b.spm.noSpm}
                             </a>
                           </td>
-                          <td>{b.rekening || "—"}</td>
-                          <td className="dk-num dk-muted">
-                            {formatBytes(b.size)}
+                          <td className="dk-num">
+                            {formatRupiah(b.spm.nilai)}
                           </td>
-                          <td className="dk-tanggal">
-                            {b.modifiedTime
-                              ? isoToTglId(b.modifiedTime.slice(0, 10))
-                              : "—"}
-                          </td>
+                          <td>{b.name}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </>
               )}
+
               <div className="dk-modal-total">
-                Total {modalBerkas.jumlahBerkas} berkas · Realisasi{" "}
-                <strong>{formatRupiah(modalBerkas.realisasi)}</strong>
-                {modalBerkas.salinan && modalBerkas.salinan.length > 0 && (
-                  <span className="dk-muted">
-                    {" "}
-                    · {modalBerkas.salinan.length} salinan berkas tidak
-                    dihitung
-                  </span>
+                {modalSpm.baris.length > 0 ? (
+                  <>
+                    <strong>{modalSpm.baris.length} SPM</strong> dari tab
+                    spreadsheet <strong>{modalSpm.tab}</strong> · jumlah nilai{" "}
+                    <strong>{formatRupiah(modalSpm.total)}</strong>
+                  </>
+                ) : (
+                  <>
+                    <strong>{(modalSpm.pdf || []).length} berkas SPM PDF</strong>{" "}
+                    di Google Drive
+                    {modalSpm.total > 0 && (
+                      <>
+                        {" "}
+                        · jumlah nilai{" "}
+                        <strong>{formatRupiah(modalSpm.total)}</strong>
+                      </>
+                    )}
+                  </>
                 )}
+                <span className="dk-muted">
+                  {" "}
+                  · sumber: spreadsheet "Rekap SPM kumulatif per bulan" &amp;
+                  berkas PDF di Drive
+                </span>
               </div>
             </div>
-            <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              {modalBerkas.link && (
-                <button
-                  className="btn-submit"
-                  style={{ background: "#0284c7", borderColor: "#0284c7" }}
-                  onClick={() => window.open(modalBerkas.link, "_blank")}
-                >
-                  Buka Folder di Drive
-                </button>
-              )}
-              <button className="btn-cancel" onClick={() => setModalBerkas(null)}>
+            <div
+              className="modal-footer"
+              style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}
+            >
+              <button className="btn-cancel" onClick={() => setModalSpm(null)}>
                 Tutup
               </button>
             </div>
@@ -1955,94 +3441,192 @@ export default function DataKegiatan() {
                     ))}
                   </datalist>
                 </div>
-                <div className="form-grid">
+                {/* Impor folder / bukti laporan — hanya drag & drop, khusus admin */}
+                {isAdmin && (
                   <div className="form-group">
-                    <label>Pagu (Rp)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      className="filter-select"
-                      style={{ width: "100%" }}
-                      value={formTambah.pagu}
-                      onChange={(e) =>
-                        setFormTambah({ ...formTambah, pagu: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Realisasi (Rp)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      className="filter-select"
-                      style={{ width: "100%" }}
-                      value={formTambah.realisasi}
-                      onChange={(e) =>
-                        setFormTambah({
-                          ...formTambah,
-                          realisasi: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-                {/* Unggah PDF ke folder kegiatan di Google Drive */}
-                <div className="form-group">
-                  <label>Unggah PDF ke Google Drive (opsional)</label>
-                  <input
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    className="filter-select dk-fileinput"
-                    disabled={santaiUpload}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] || null;
-                      setFileTambah(f);
-                      setStatusUpload(null);
-                      setSubFolderRekening("");
-                    }}
-                  />
-                  {!GOOGLE_CLIENT_ID && (
-                    <p className="dk-seghint dk-seghint-warn">
-                      Unggahan dinonaktifkan: GOOGLE_CLIENT_ID belum diisi di{" "}
-                      <code>src/components/DataKegiatan.js</code>.
-                    </p>
-                  )}
-                  {fileTambah && (
-                    <p className="dk-seghint">
-                      {fileTambah.name} · {formatBytes(fileTambah.size)}
-                    </p>
-                  )}
-                  {daftarRekening.length > 0 && (
-                    <div className="form-group" style={{ marginTop: 8 }}>
-                      <label>Simpan ke rekening</label>
-                      <select
-                        className="filter-select"
-                        style={{ width: "100%" }}
-                        value={subFolderRekening}
-                        disabled={santaiUpload}
-                        onChange={(e) => setSubFolderRekening(e.target.value)}
-                      >
-                        <option value="">— Folder kegiatan (langsung) —</option>
-                        {daftarRekening.map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.kode} — {namaRekening(r.kode)}
-                          </option>
-                        ))}
-                      </select>
+                    <label>Tambah folder / bukti laporan (tarik &amp; lepas)</label>
+                    <div
+                      className={`fm-dropzone${dragTambah ? " fm-dropzone-active" : ""}${
+                        analisaTambah ? " fm-dropzone-filled" : ""
+                      }`}
+                      style={{
+                        cursor: santaiUpload || menganalisaTambah ? "not-allowed" : "default",
+                        opacity: santaiUpload || menganalisaTambah ? 0.7 : 1,
+                      }}
+                      role="region"
+                      aria-label="Area tarik dan lepas berkas atau folder"
+                      onDragOver={handleDragOverTambah}
+                      onDragEnter={handleDragOverTambah}
+                      onDragLeave={handleDragLeaveTambah}
+                      onDrop={handleDropTambah}
+                    >
+                      {menganalisaTambah ? (
+                        <div
+                          className="fm-dropzone-selected"
+                          style={{
+                            justifyContent: "center",
+                            display: "flex",
+                            alignItems: "center",
+                          }}
+                        >
+                          <span style={{ color: "#2563eb", fontWeight: 700 }}>
+                            ⏳ Membaca folder…
+                          </span>
+                        </div>
+                      ) : analisaTambah ? (
+                        <div className="fm-dropzone-selected">
+                          <svg
+                            width="34"
+                            height="34"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="#16a34a"
+                            strokeWidth="1.6"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M20 20h-8l-2-9h-4l-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h12a2 2 0 0 0 2 2v8a2 2 0 0 1-2 2z" />
+                          </svg>
+                          <div style={{ flex: 1, overflow: "hidden" }}>
+                            <div className="fm-dropzone-filename">
+                              {analisaTambah.namaFolder ||
+                                (analisaTambah.kode
+                                  ? `${analisaTambah.kode}.${analisaTambah.nama || ""}`
+                                  : "Berkas baru")}
+                            </div>
+                            <div className="fm-dropzone-filesize">
+                              {analisaTambah.files.length} berkas · {analisaTambah.jumlahPdf} PDF ·{" "}
+                              {analisaTambah.jumlahExcel} Excel
+                            </div>
+                            <div className="fm-dropzone-filesize">
+                              Realisasi: {formatRupiah(analisaTambah.totalRealisasi)} ·{" "}
+                              {analisaTambah.sumber}
+                            </div>
+                            <div className="fm-dropzone-filesize" style={{ marginTop: 6, fontWeight: 700 }}>
+                              {analisaTambah.files.map((f) => (
+                                <div key={kunciPathBerkas(f.path, f.file.name)}>
+                                  {f.file.name}
+                                </div>
+                              ))}
+                            </div>
+                            {analisaTambah.jumlahPdf === 0 && (
+                              <div className="fm-dropzone-filesize">
+                                Tanpa bukti PDF — realisasi dibaca dari berkas Excel/CSV.
+                              </div>
+                            )}
+                            {analisaTambah.bulanList &&
+                              analisaTambah.bulanList.length > 0 && (
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    flexWrap: "wrap",
+                                    gap: 6,
+                                    marginTop: 8,
+                                  }}
+                                >
+                                  {analisaTambah.bulanList.map((ym) => (
+                                    <span
+                                      key={ym}
+                                      style={{
+                                        border: "1px solid #bfdbfe",
+                                        background: "#eff6ff",
+                                        color: "#1e40af",
+                                        borderRadius: 999,
+                                        padding: "2px 10px",
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      {ym} · {formatRupiah(analisaTambah.perBulan[ym])}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                          </div>
+                          <button
+                            type="button"
+                            className="fm-dropzone-clear"
+                            title="Hapus folder/berkas"
+                            disabled={santaiUpload}
+                            onClick={() => {
+                              setAnalisaTambah(null);
+                              setStatusUpload(null);
+                              setPesanFileTambah("");
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <svg
+                            width="38"
+                            height="38"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke={dragTambah ? "#3b82f6" : "#9ca3af"}
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
+                          </svg>
+                          <div className="fm-dropzone-text">
+                            <strong>Tarik &amp; lepas folder / berkas</strong> ke area ini
+                          </div>
+                          <div className="fm-dropzone-hint">
+                            Folder kegiatan + subfolder · PDF dan/atau Excel/CSV · tanpa bukti PDF
+                          </div>
+                        </>
+                      )}
                     </div>
-                  )}
-                  {statusUpload && (
-                    <p className="dk-uploadstatus">
-                      {santaiUpload ? "⏳ " : ""}
-                      {statusUpload}
+                    {pesanFileTambah && (
+                      <p className="dk-seghint dk-seghint-warn">
+                        {pesanFileTambah}
+                      </p>
+                    )}
+                    {!GOOGLE_CLIENT_ID && (
+                      <p className="dk-seghint dk-seghint-warn">
+                        Unggahan dinonaktifkan: GOOGLE_CLIENT_ID belum diisi di{" "}
+                        <code>src/components/DataKegiatan.js</code>.
+                      </p>
+                    )}
+                    {daftarRekening.length > 0 && (
+                      <div className="form-group" style={{ marginTop: 8 }}>
+                        <label>Simpan ke rekening</label>
+                        <select
+                          className="filter-select"
+                          style={{ width: "100%" }}
+                          value={subFolderRekening}
+                          disabled={santaiUpload}
+                          onChange={(e) => setSubFolderRekening(e.target.value)}
+                        >
+                          <option value="">— Folder kegiatan (langsung) —</option>
+                          {daftarRekening.map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.kode} — {namaRekening(r.kode)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {statusUpload && (
+                      <p className="dk-uploadstatus">
+                        {santaiUpload ? "⏳ " : ""}
+                        {statusUpload}
+                      </p>
+                    )}
+                    <p style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+                      Data disimpan di browser ini (localStorage); berkasnya ikut
+                      diunggah ke Google Drive. Bila kegiatan sudah ada di Drive,
+                      gunakan folder-nya agar bukti kerja ikut terambil otomatis.
                     </p>
-                  )}
-                  <p style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
-                    Data disimpan di browser ini (localStorage). Bila kegiatan sudah
-                    ada di Google Drive, gunakan folder-nya agar bukti kerja ikut
-                    terambil otomatis.
-                  </p>
-                </div>
+                  </div>
+                )}
               </div>
               <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button
@@ -2053,7 +3637,11 @@ export default function DataKegiatan() {
                 >
                   Batal
                 </button>
-                <button type="submit" className="btn-submit" disabled={santaiUpload}>
+                <button
+                  type="submit"
+                  className="btn-submit"
+                  disabled={santaiUpload || menganalisaTambah}
+                >
                   {santaiUpload ? "Mengunggah…" : "Simpan Data"}
                 </button>
               </div>
@@ -2064,3 +3652,5 @@ export default function DataKegiatan() {
     </div>
   );
 }
+
+export { cocokCari, normalCari };

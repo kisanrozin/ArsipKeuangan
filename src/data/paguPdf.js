@@ -108,6 +108,15 @@ function ekstrakPaguDanStamp(teks) {
   };
 }
 
+/* Baca nominal pagu & digital stamp dari berkas lokal (File) yang
+   baru di-drop — dipakai fitur "Tambah Data" drag & drop di halaman
+   History Revisi DIPA (sama seperti baca dari Drive, tapi dari File). */
+export async function bacaPaguDariFile(file) {
+  const buffer = await file.arrayBuffer();
+  const teks = await teksHalamanPertama(buffer);
+  return ekstrakPaguDanStamp(teks);
+}
+
 /* Unduh isi berkas sebagai ArrayBuffer (untuk di-parse pdf.js). */
 async function unduhPdf(fileId) {
   const res = await fetch(

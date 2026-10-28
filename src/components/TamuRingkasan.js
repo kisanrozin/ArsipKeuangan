@@ -31,8 +31,8 @@ export default function TamuRingkasan({ setActivePage }) {
   return (
     <>
       <HeroBanner
-        title="DIARKES"
-        subtitle="DIGITALISASI ARSIP KEUANGAN PUSAT PENGEMBANGAN KOMPETENSI SUMBER DAYA AIR , CIPTA KARYA DAN PRASARANA STRATEGIS"
+        title="DIGITALISASI ARSIP KEUANGAN"
+        subtitle="PUSAT PENGEMBANGAN KOMPETENSI SUMBER DAYA AIR , CIPTA KARYA DAN PRASARANA STRATEGIS"
         crumbs={["Beranda", "Viewers"]}
       />
 

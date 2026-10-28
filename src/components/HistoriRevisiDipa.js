@@ -4,7 +4,7 @@ import {
   TAHUN_ANGGARAN_AKTIF,
   DIPA_FOLDER_ARSIP,
 } from "../data/masterData";
-import { bacaPaguDariPdf } from "../data/paguPdf";
+import { bacaPaguDariPdf, bacaPaguDariFile } from "../data/paguPdf";
 import { usePeran } from "../context/PeranContext";
 
 // ============================================================
@@ -31,10 +31,11 @@ import { usePeran } from "../context/PeranContext";
 //                   Drive untuk SEMUA DIPA (Awal & Revisi 1–13).
 //                   HISTORI_REVISI_DIPA hanya menjadi cadangan bila PDF
 //                   gagal dibaca (dan hanya berlaku untuk TA aktif).
-//   • Kode jenis revisi / keterangan
-//                 → HISTORI_REVISI_DIPA; dapat diubah manual lewat ikon
-//                   pensil (bertahan selama tab terbuka) atau baris baru
-//                   lewat tombol "Tambah Data".
+//   • Tambah Data → hanya lewat tombol "Tambah Data" lalu drag &
+//                   drop berkas bukti laporan (PDF); DIPA, tanggal, pagu,
+//                   dan digital stamp diambil otomatis dari berkas yang
+//                   di-drop (dibaca lewat src/data/paguPdf.js → bacaPaguDariFile).
+//                   Tidak ada form manual sama sekali.
 // ============================================================
 
 // Google Drive Config — API key (sama dengan JenisDokumen.js).
@@ -42,15 +43,6 @@ import { usePeran } from "../context/PeranContext";
 // (DIPA_FOLDER_ARSIP). Daftar tahun filter disusun dari isi Drive.
 const API_KEY = "AIzaSyDuWHtZlBJ2MFERVARPT0084MATICbUv5k";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
-
-const KOLOM_KOSONG = {
-  dipa: "",
-  tanggal: "",
-  pagu: "",
-  digitalStamp: "",
-  kodeJenisRevisi: "",
-  keterangan: "",
-};
 
 /* Sinkronisasi otomatis dari Google Drive (milidetik).
    Halaman mengulang pembacaan folder DIPA secara diam-diam dengan
@@ -127,6 +119,114 @@ function tahunDariTanggal(tanggal) {
 
 function labelDipa(nomor) {
   return nomor === 0 ? "DIPA Awal" : `DIPA Revisi ${nomor}`;
+}
+
+/* Buka berkas bukti laporan "Surat Pengesahan Daftar Isian
+   Pelaksanaan Anggaran Petikan" dari Google Drive (modal tabel History). */
+function bukaBuktiDipa(item) {
+  const url =
+    item && item.dipaBerkasWebViewLink
+      ? String(item.dipaBerkasWebViewLink)
+      : item && item.dipaBerkasId
+      ? `https://drive.google.com/file/d/${item.dipaBerkasId}/view`
+      : null;
+  if (url && typeof window !== "undefined") {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
+/* ── Upload bukti laporan ke folder DIPA di Google Drive ─────────
+   Data tambahan (drag & drop) sebaiknya juga dikirim ke Drive supaya
+   History Revisi DIPA — yang membaca folder DIPA di Drive — otomatis
+   menampilkannya (sinkron real-time).                                           */
+const TOKEN_KEY_DRIVE = "pu_arsip_drive_token";
+
+function bacaTokenDrive() {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY_DRIVE) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function buatFolderDrive(token, namaFolder, indukId) {
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?key=${API_KEY}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        name: namaFolder,
+        mimeType: FOLDER_MIME,
+        parents: [indukId],
+      }),
+    }
+  );
+  if (!res.ok) {
+    const pesan = await bacaPesanDrive(res);
+    throw new Error(`Gagal membuat folder di Drive — ${pesan}`);
+  }
+  return res.json();
+}
+
+async function unggahBerkasDrive(token, indukId, file) {
+  const boundary = `puarsip${Date.now()}`;
+  const meta = {
+    name: file.name,
+    parents: [indukId],
+    mimeType: file.type || "application/pdf",
+  };
+  const body = new Blob(
+    [
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
+      JSON.stringify(meta),
+      `\r\n--${boundary}\r\nContent-Type: application/pdf\r\n\r\n`,
+      file,
+      `\r\n--${boundary}--`,
+    ],
+    { type: `multipart/related; boundary=${boundary}` }
+  );
+
+  const res = await fetch(
+    `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,webViewLink&key=${API_KEY}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": `multipart/related; boundary=${boundary}`,
+      },
+      body,
+    }
+  );
+  if (!res.ok) {
+    const pesan = await bacaPesanDrive(res);
+    throw new Error(`Gagal mengunggah berkas — ${pesan}`);
+  }
+  return res.json();
+}
+
+async function bacaPesanDrive(res) {
+  try {
+    const data = await res.json();
+    return data?.error?.message || `HTTP ${res.status}`;
+  } catch (e) {
+    return `HTTP ${res.status}`;
+  }
+}
+
+async function uploadBuktiKeDrive(file, namaFolder, indukId) {
+  const token = bacaTokenDrive();
+  if (!token) {
+    throw new Error(
+      "Token Google Drive belum tersedia. Silakan login lewat halaman Drive terlebih dahulu."
+    );
+  }
+  const folder = await buatFolderDrive(token, namaFolder, indukId);
+  const up = await unggahBerkasDrive(token, folder.id || indukId, file);
+  return up;
 }
 
 /* ── Tanggal penetapan dari nama berkas ──────────────────────────
@@ -212,8 +312,6 @@ function barisDariFolder(folder, isiFolder, master) {
     dipa: labelDipa(nomor),
     tanggal: tanggal || ref.tanggal || "—",
     pagu: isiNilai(ref.pagu),
-    digitalStamp: isiNilai(ref.digitalStamp),
-    kodeJenisRevisi: isiNilai(ref.kodeJenisRevisi),
     keterangan: isiNilai(ref.keterangan),
     link:
       folder.webViewLink ||
@@ -222,11 +320,13 @@ function barisDariFolder(folder, isiFolder, master) {
     // Berkas PDF DIPA → sumber pembacaan nominal pagu dari Drive.
     dipaBerkasId: dipaBerkas ? dipaBerkas.id : null,
     dipaBerkasModified: dipaBerkas ? dipaBerkas.modifiedTime : null,
+    dipaBerkasName: dipaBerkas ? dipaBerkas.name : null,
+    dipaBerkasWebViewLink: dipaBerkas ? dipaBerkas.webViewLink || null : null,
     lokal: false,
   };
 }
 
-export default function HistoriRevisiDipa({ setActivePage }) {
+export default function HistoriRevisiDipa({ setActivePage, periode = null }) {
   /* Mode tamu → tabel tetap tampil, tombol tambah/ubah/hapus disembunyikan. */
   const { isAdmin } = usePeran();
   const [baris, setBaris] = React.useState([]);
@@ -234,15 +334,30 @@ export default function HistoriRevisiDipa({ setActivePage }) {
   const [error, setError] = React.useState(null);
   const [terakhirUpdate, setTerakhirUpdate] = React.useState(null);
   const [modalTambah, setModalTambah] = React.useState(false);
-  const [form, setForm] = React.useState(KOLOM_KOSONG);
-  const [modeForm, setModeForm] = React.useState("tambah"); // tambah | edit
-  const [idEdit, setIdEdit] = React.useState(null);
+  const [fileBukti, setFileBukti] = React.useState(null);
+  const [dragBukti, setDragBukti] = React.useState(false);
 
   // Filter tahun anggaran — judul & data tabel ikut berpindah TA.
   // Daftar pilihannya (opsiTahun) disusun dari tahun yang benar-benar
   // ada di Google Drive, jadi tahun baru otomatis muncul.
-  const [tahun, setTahun] = React.useState(TAHUN_ANGGARAN_AKTIF);
+  /* Tahun dari filter beranda ("Realisasi Data Per Bulan") dipakai
+     sebagai nilai awal, supaya History langsung menampilkan TA yang
+     sama dengan beranda. Bulan tidak dipakai di halaman ini karena
+     dokumen DIPA hanya dikelompokkan per tahun. */
+  const tahunPeriode = Number(periode && periode.tahun);
+  const [tahun, setTahun] = React.useState(
+    Number.isFinite(tahunPeriode) && tahunPeriode > 0
+      ? tahunPeriode
+      : TAHUN_ANGGARAN_AKTIF
+  );
   const [opsiTahun, setOpsiTahun] = React.useState([]);
+
+  /* Bila filter tahun di beranda berubah saat halaman ini terbuka
+     (mis. lewat pergantian bulan/tahun otomatis), ikuti tahun itu. */
+  React.useEffect(() => {
+    const t = Number(periode && periode.tahun);
+    if (Number.isFinite(t) && t > 0) setTahun(t);
+  }, [periode]);
 
   // Nilai yang diisi manual, dibaca ulang tiap data dimuat dari Drive.
   const perubahanRef = React.useRef({});
@@ -342,7 +457,6 @@ export default function HistoriRevisiDipa({ setActivePage }) {
                   row.pagu = pdf.pagu;
                   row.paguDariPdf = true;
                 }
-                if (pdf.digitalStamp) row.digitalStamp = pdf.digitalStamp;
               }
             } catch (e) {
               console.warn(
@@ -412,66 +526,95 @@ export default function HistoriRevisiDipa({ setActivePage }) {
     };
   }, [muatData]);
 
-  /* ── Form ─────────────────────────────────────────────────────── */
+  /* ── Form tambah data: drag & drop bukti laporan PDF ─────────── */
   const bukaTambah = () => {
-    setModeForm("tambah");
-    setIdEdit(null);
-    setForm(KOLOM_KOSONG);
+    setFileBukti(null);
+    setDragBukti(false);
     setModalTambah(true);
   };
 
-  const bukaEdit = (row) => {
-    setModeForm("edit");
-    setIdEdit(row.id);
-    const kosongkan = (v) => (v === "—" ? "" : v || "");
-    setForm({
-      dipa: row.dipa || "",
-      tanggal: kosongkan(row.tanggal),
-      pagu: kosongkan(row.pagu),
-      digitalStamp: kosongkan(row.digitalStamp),
-      kodeJenisRevisi: kosongkan(row.kodeJenisRevisi),
-      keterangan: kosongkan(row.keterangan),
-    });
-    setModalTambah(true);
-  };
-
-  const ubahForm = (e) => {
-    const { name, value } = e.target;
-    setForm((lama) => ({ ...lama, [name]: value }));
-  };
-
-  const simpanBaris = (e) => {
-    e.preventDefault();
-    const nilai = {
-      dipa: form.dipa.trim() || "—",
-      tanggal: form.tanggal.trim() || "—",
-      pagu: form.pagu.trim() || "—",
-      digitalStamp: form.digitalStamp.trim() || "—",
-      kodeJenisRevisi: form.kodeJenisRevisi.trim() || "—",
-      keterangan: form.keterangan.trim() || "—",
-    };
-    if (modeForm === "edit") {
-      perubahanRef.current = { ...perubahanRef.current, [idEdit]: nilai };
-      setBaris((lama) =>
-        lama.map((r) => (r.id === idEdit ? { ...r, ...nilai } : r))
-      );
-    } else {
-      const cocok = form.dipa.trim().match(/(\d{1,2})\s*$/);
-      setBaris((lama) => [
-        ...lama,
-        {
-          ...nilai,
-          id: `lokal_${Date.now()}`,
-          nomor: cocok ? Number(cocok[1]) : null,
-          tahun,
-          lokal: true,
-          urutan: (lama[lama.length - 1]?.urutan || 0) + 1,
-          jumlahBerkas: 0,
-        },
-      ]);
-    }
-    setForm(KOLOM_KOSONG);
+  /* Tambah baris baru DIPA Revisi dari nilai yang sudah final (hasil
+     baca otomatis dari bukti laporan yang di-drop). */
+  const tambahBarisDariNilai = (nilai) => {
+    const cocok = String(nilai.dipa || "").match(/(\d{1,2})\s*$/);
+    setBaris((lama) => [
+      ...lama,
+      {
+        ...nilai,
+        id: `lokal_${Date.now()}`,
+        nomor: cocok ? Number(cocok[1]) : null,
+        tahun,
+        lokal: true,
+        urutan: (lama[lama.length - 1]?.urutan || 0) + 1,
+        jumlahBerkas: 0,
+      },
+    ]);
     setModalTambah(false);
+  };
+
+  /* Baca bukti laporan ("Surat Pengesahan Daftar Isian Pelaksanaan
+     Anggaran Petikan") dari berkas lokal yang baru di-drop → otomatis
+     membentuk nilai baris tambahan (DIPA, tanggal, pagu, digital stamp). */
+  const simpanBarisDariFile = async (file) => {
+    const bukti = await bacaPaguDariFile(file);
+    const nama = String(file.name || "").toUpperCase();
+    const cocokAwal = /DIPA\s+AWAL/.test(nama);
+    const cocokRev = nama.match(/DIPA\s+REVISI\s*(?:KE)?\s*(\d{1,2})/);
+    const nomor = cocokAwal ? 0 : cocokRev ? Number(cocokRev[1]) : null;
+    const dipa = cocokAwal ? "DIPA Awal" : nomor ? `DIPA Revisi ${nomor}` : "—";
+    const tanggal = tanggalDariNama(file.name) || "—";
+    const nilai = {
+      dipa,
+      tanggal,
+      pagu: bukti.pagu != null ? String(bukti.pagu) : "—",
+      keterangan: "—",
+    };
+    // Upload ke folder DIPA di Google Drive supaya History (yang membaca
+    // folder Drive) menampilkannya secara otomatis (sinkron real-time).
+    const tahunUpload = (() => {
+      const cocokT = String(tanggal || "").match(/\b(20\d{2})\b/);
+      return cocokT
+        ? Number(cocokT[1])
+        : Number(tahun) || Number(TAHUN_ANGGARAN_AKTIF);
+    })();
+    const namaFolderUpload = `${dipa} TA ${tahunUpload}`;
+    try {
+      await uploadBuktiKeDrive(file, namaFolderUpload, DIPA_FOLDER_ARSIP);
+    } catch (e) {
+      console.warn("Upload ke Drive gagal — menyimpan lokal saja:", e);
+    }
+    tambahBarisDariNilai(nilai);
+  };
+
+  /* Drag & drop handler untuk modal "Tambah Data Revisi DIPA" — hanya
+     menerima berkas bukti laporan (PDF) lewat drag & drop. */
+  const onDragOverBukti = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragBukti(true);
+  };
+
+  const onDragLeaveBukti = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setDragBukti(false);
+  };
+
+  const onDropBukti = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragBukti(false);
+    const file =
+      e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files[0] : null;
+    if (!file) return;
+    setFileBukti(file);
+    try {
+      await simpanBarisDariFile(file);
+    } catch (err) {
+      console.error("Gagal membaca bukti laporan dari berkas yang di-drop:", err);
+      alert("Gagal membaca bukti laporan dari berkas yang di-drop.");
+    }
   };
 
   const hapusBaris = (row) => {
@@ -568,9 +711,8 @@ export default function HistoriRevisiDipa({ setActivePage }) {
                   <th className="hrd-col-dipa">DIPA</th>
                   <th className="hrd-col-tanggal">Tanggal Penetapan</th>
                   <th className="hrd-col-pagu">Pagu (Rp)</th>
-                  <th className="hrd-col-stamp">Digital Stamp</th>
-                  <th className="hrd-col-kode">Kode Jenis Revisi</th>
                   <th className="hrd-col-ket">Keterangan</th>
+                  <th className="hrd-col-bukti">Bukti</th>
                   {isAdmin && <th className="hrd-col-aksi">Aksi</th>}
                 </tr>
               </thead>
@@ -590,42 +732,30 @@ export default function HistoriRevisiDipa({ setActivePage }) {
                         {item.dipa}
                       </td>
                       <td>{item.tanggal}</td>
-                      <td className="hrd-col-pagu">
-                        {item.pagu}
-                        {item.paguDariPdf && (
-                          <span
-                            className="hrd-pdf-src"
-                            title="Nominal dibaca otomatis dari berkas PDF DIPA di Google Drive"
-                          >
-                            📄
-                          </span>
-                        )}
-                      </td>
-                      <td className="hrd-cell-mono">
-                        {item.digitalStamp}
-                        {item.paguDariPdf && item.digitalStamp !== "—" && (
-                          <span
-                            className="hrd-pdf-src"
-                            title="Digital stamp dibaca otomatis dari berkas PDF DIPA di Google Drive"
-                          >
-                            📄
-                          </span>
-                        )}
-                      </td>
-                      <td>{item.kodeJenisRevisi}</td>
+                      <td className="hrd-col-pagu">{item.pagu}</td>
                       <td className="hrd-cell-ket" title={item.keterangan}>
                         {item.keterangan}
                       </td>
-                      {isAdmin && (
-                        <td className="hrd-col-aksi">
+                      <td className="hrd-col-bukti">
+                        {(item.dipaBerkasId || item.dipaBerkasWebViewLink) ? (
                           <button
                             type="button"
                             className="hrd-row-btn"
-                            onClick={() => bukaEdit(item)}
-                            title="Ubah data revisi ini"
+                            onClick={() => bukaBuktiDipa(item)}
+                            title={
+                              item.dipaBerkasName
+                                ? `Buka bukti laporan: ${item.dipaBerkasName}`
+                                : "Buka bukti laporan: Surat Pengesahan Daftar Isian Pelaksanaan Anggaran Petikan"
+                            }
                           >
-                            ✎
+                            📄
                           </button>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      {isAdmin && (
+                        <td className="hrd-col-aksi">
                           {item.lokal && (
                             <button
                               type="button"
@@ -642,7 +772,7 @@ export default function HistoriRevisiDipa({ setActivePage }) {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={isAdmin ? 8 : 7} className="hrd-empty">
+                    <td colSpan={isAdmin ? 7 : 6} className="hrd-empty">
                       {loading
                         ? `Mengambil data History Revisi DIPA tahun ${tahun} dari Google Drive...`
                         : error
@@ -656,62 +786,22 @@ export default function HistoriRevisiDipa({ setActivePage }) {
           </div>
 
           {error && <div className="alert alert-warn hrd-alert">{error}</div>}
-
-          <p className="hrd-hint">
-            Sumber data: folder DIPA di Google Drive (
-            <code>DIPA AWAL TA 2026</code>, <code>DIPA REVISI 1..13 TA 2026</code>
-            ). Gunakan filter <strong>Tahun</strong> di kanan atas untuk
-            berpindah tahun — daftar tahunnya disusun otomatis dari data yang
-            ada di Google Drive, jadi tahun baru (mis. TA 2030) langsung
-            muncul tanpa perlu memperbarui aplikasi. Judul dan isi tabel ikut
-            menyesuaikan. Pengelompokan mengikuti <strong>tanggal
-            dokumen</strong>: DIPA Awal (1 Des 2025) dan Revisi 1 (28 Des 2025)
-            tampil di tahun 2025, sedangkan revisi bertanggal 2026 tampil di
-            tahun 2026. Nama folder dipakai sebagai kolom DIPA, tanggal
-            penetapan diambil dari nama berkas PDF DIPA di dalamnya.
-            Nominal pagu &amp; digital stamp <strong>semua DIPA</strong> dibaca
-            otomatis dari berkas PDF &ldquo;Surat Pengesahan Daftar Isian
-            Pelaksanaan Anggaran Petikan&rdquo; di folder Drive (ditandai{" "}
-            <span className="hrd-pdf-src">📄</span>); masterData hanya dipakai
-            bila PDF gagal dibaca. Halaman ini{" "}
-            <strong>sinkron otomatis setiap ±30 detik</strong> langsung dari
-            Google Drive — tambah/ubah/rename folder atau berkas di Drive akan
-            terbaca tanpa perlu klik "Muat Ulang".{" "}
-            {isAdmin ? (
-              <>
-                Pagu, digital stamp, kode jenis revisi, dan keterangan masih
-                dapat diubah manual lewat ikon pensil — nilai manual menimpa
-                bacaan otomatis selama halaman ini terbuka.
-              </>
-            ) : (
-              <>
-                Halaman ini berada dalam <strong>Mode Tamu</strong>: data yang
-                sudah diinput admin ditampilkan apa adanya, tanpa tombol ubah
-                atau tambah.
-              </>
-            )}
-          </p>
         </section>
       </div>
 
-      {/* ── Modal Tambah / Ubah Data ── */}
+      {/* ── Modal Tambah Data (drag & drop bukti laporan) ── */}
       {modalTambah && (
         <div
           className="hrd-modal-overlay"
           role="presentation"
           onClick={() => setModalTambah(false)}
         >
-          <form
+          <div
             className="hrd-modal"
             onClick={(e) => e.stopPropagation()}
-            onSubmit={simpanBaris}
           >
             <div className="hrd-modal-head">
-              <h2>
-                {modeForm === "edit"
-                  ? "Ubah Data Revisi DIPA"
-                  : "Tambah Data Revisi DIPA"}
-              </h2>
+              <h2>Tambah Data Revisi DIPA</h2>
               <button
                 type="button"
                 className="hrd-modal-close"
@@ -723,60 +813,35 @@ export default function HistoriRevisiDipa({ setActivePage }) {
             </div>
 
             <div className="hrd-modal-body">
-              <label className="hrd-field">
-                <span>DIPA</span>
-                <input
-                  name="dipa"
-                  value={form.dipa}
-                  onChange={ubahForm}
-                  placeholder="mis. DIPA Revisi 14"
-                />
-              </label>
-              <label className="hrd-field">
-                <span>Tanggal Penetapan</span>
-                <input
-                  name="tanggal"
-                  value={form.tanggal}
-                  onChange={ubahForm}
-                  placeholder="mis. 12 Juni 2026"
-                />
-              </label>
-              <label className="hrd-field">
-                <span>Pagu (Rp)</span>
-                <input
-                  name="pagu"
-                  value={form.pagu}
-                  onChange={ubahForm}
-                  placeholder="mis. 15.889.706.000"
-                />
-              </label>
-              <label className="hrd-field">
-                <span>Digital Stamp</span>
-                <input
-                  name="digitalStamp"
-                  value={form.digitalStamp}
-                  onChange={ubahForm}
-                  placeholder="mis. 1234-5678-90ab-cdef"
-                />
-              </label>
-              <label className="hrd-field">
-                <span>Kode Jenis Revisi</span>
-                <input
-                  name="kodeJenisRevisi"
-                  value={form.kodeJenisRevisi}
-                  onChange={ubahForm}
-                  placeholder="mis. 211, 325"
-                />
-              </label>
-              <label className="hrd-field">
-                <span>Keterangan</span>
-                <input
-                  name="keterangan"
-                  value={form.keterangan}
-                  onChange={ubahForm}
-                  placeholder="mis. Revisi Pemutakhiran RPD"
-                />
-              </label>
+              <div className="hrd-field">
+                <span>Bukti laporan — drag &amp; lepas berkas PDF</span>
+                <div
+                  className={`hrd-dropzone${dragBukti ? " hrd-dropzone-active" : ""}${
+                    fileBukti ? " hrd-dropzone-filled" : ""
+                  }`}
+                  onDragOver={onDragOverBukti}
+                  onDragEnter={onDragOverBukti}
+                  onDragLeave={onDragLeaveBukti}
+                  onDrop={onDropBukti}
+                >
+                  <span className="hrd-dropzone-logo" aria-hidden="true">
+                    📄
+                  </span>
+                  <span className="hrd-dropzone-text">
+                    {dragBukti
+                      ? "Lepaskan berkas bukti laporan di sini..."
+                      : "Tarik & lepas berkas bukti laporan (Surat Pengesahan Daftar Isian Pelaksanaan Anggaran Petikan) PDF ke sini"}
+                  </span>
+                  <span className="hrd-dropzone-hint">
+                    Sistem hanya menerima drag &amp; drop — DIPA, tanggal, pagu, dan digital stamp diambil otomatis dari berkas.
+                  </span>
+                  {fileBukti ? (
+                    <span className="hrd-dropzone-selected">
+                      <span className="hrd-dropzone-filename">{fileBukti.name}</span>
+                    </span>
+                  ) : null}
+                </div>
+              </div>
             </div>
 
             <div className="hrd-modal-foot">
@@ -787,11 +852,8 @@ export default function HistoriRevisiDipa({ setActivePage }) {
               >
                 Batal
               </button>
-              <button type="submit" className="hrd-btn-primary">
-                Simpan
-              </button>
             </div>
-          </form>
+          </div>
         </div>
       )}
     </div>

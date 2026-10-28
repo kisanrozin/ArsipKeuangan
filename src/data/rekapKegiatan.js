@@ -21,11 +21,17 @@
         spreadsheet. Dipakai untuk bulan yang BELUM punya tab rekap
         kumulatif (mis. Januari & Februari).
 
-   JANGKAUAN: rekap resmi di Drive baru lengkap sampai AGUSTUS,
-   jadi bulan setelahnya sengaja dikosongkan — lebih baik kosong
-   daripada menampilkan angka yang tidak ada sumbernya.          */
+   JANGKAUAN: nama tab rekap dibaca OTOMATIS dari daftar tab asli
+   spreadsheet (src/data/daftarSheet.js), jadi:
+     · tab yang baru ditambahkan di Drive langsung terpakai tanpa
+       mengubah kode — angka ikut berubah sendiri (realtime);
+     · tab yang belum ada tidak pernah dipanggil, karena GVIZ diam-
+       diam mengembalikan tab pertama bila nama tab salah (penyebab
+       angka satu bulan bisa tertukar dengan bulan lain);
+     · bulan tanpa tab → dikosongkan, bukan diisi angka tab lain.  */
 
 import { BULAN_ANGGARAN_OPTIONS, TAHUN_ANGGARAN_AKTIF } from "./masterData";
+import { petaTabRekap, tabRekapTerbaru } from "./daftarSheet";
 
 /* ── Konstanta integrasi ───────────────────────────────────── */
 export const SPJ_FOLDER_ID = "1gZkmFPnVyWO5fqWLsHGAv_eu56WOdt_8";
@@ -35,30 +41,19 @@ const FOLDER_MIME = "application/vnd.google-apps.folder";
 /* Spreadsheet default (dipakai bila tautan lain belum dipasang). */
 export const DEFAULT_SHEET_ID = "1DR7lNNAK4UBbFRGqhG2uDB5ANHmz-g8v";
 
-/* Tab rekap kumulatif yang dibaca, dipetakan ke bulan BATASnya.
-   ─────────────────────────────────────────────────────────────
-   PENTING: data rekap resmi — spreadsheet "Rekap SPM kumulatif
-   per bulan" di Drive Arsip Digital — baru lengkap sampai
-   AGUSTUS. Tab setelah itu sengaja TIDAK dipakai, dan bulan
-   September/desember seterusnya ditampilkan kosong (bukan angka
-   turunan), karena tidak ada sumber resmi yang bisa
-   dipertanggungjawabkan.
+/* Tab rekap kumulatif TIDAK diketik manual di sini.
+   Namanya diambil dari daftar tab asli spreadsheet setiap kali data
+   dimuat (lihat petaTabRekap di src/data/daftarSheet.js), sehingga
+   tab baru di Drive langsung terbaca dan tab yang belum ada tidak
+   pernah dipanggil — GVIZ diam-diam mengembalikan tab pertama bila
+   nama tab salah, dan itu membuat angka bulan tertukar. */
 
-   Untuk memperpanjang jangkauan: perbarui dulu rekap di Drive,
-   baru tambahkan satu baris di bawah. Tab yang belum ada di
-   spreadsheet otomatis dilewati, jadi tidak akan merusak. */
-const TAB_REKAP_KUMULATIF = [
-  { bulan: "februari", tab: "JAN SD FEBRUARI" },
-  { bulan: "maret", tab: "JAN SD MRT" },
-  { bulan: "april", tab: "JAN SD APRIL" },
-  { bulan: "mei", tab: "JAN SD MEI" },
-  { bulan: "juni", tab: "JAN SD JUNI" },
-  { bulan: "juli", tab: "JAN SD JULI" },
-  { bulan: "agustus", tab: "JAN SD AGUSTUS" },
-];
-
-/* Tab rekap yang dipakai halaman "Data Kegiatan" (kumulatif penuh). */
-export const SHEET_TAB_REKAP = "JAN SD AGUSTUS";
+/* Tab rekap yang dipakai halaman "Data Kegiatan" (kumulatif penuh):
+   tab TERBARU yang ada di spreadsheet. resolved tiap pemuatan. */
+export async function tabRekapTerbaruAktif(paksa = false) {
+  const terbaru = await tabRekapTerbaru(sheetIdAktif(), paksa);
+  return terbaru ? terbaru.nama : null;
+}
 
 /* Urutan bulan (1…12) dari BULAN_ANGGARAN_OPTIONS */
 const URUTAN_BULAN = BULAN_ANGGARAN_OPTIONS.map((b) => b.id);
@@ -147,9 +142,13 @@ export function sheetIdAktif() {
 }
 
 async function gviz(sheetId, tab) {
+  /* CATATAN: jangan pakai headers=1. Dengan parameter itu GVIZ
+     memakai baris merge (judul panjang) sebagai header, sehingga
+     label kolom "Kode rekening" hilang dan tab rekap gagal
+     dikenali. Tanpa headers=1, GVIZ menebak sendiri dan label
+     kolom sesuai nama kolom aslinya. */
   const params = new URLSearchParams({
     tqx: "out:json",
-    headers: "1",
     t: String(Date.now()),
   });
   /* Tanpa nama tab → Google mengembalikan tab PERTAMA spreadsheet,
@@ -173,11 +172,30 @@ async function gviz(sheetId, tab) {
 }
 
 /* ── Baca satu tab rekap kumulatif ─────────────────────────────
-   Mengembalikan { total, jumlahSpm, jumlahRekening, rekening }. */
+   Mengembalikan { total, jumlahSpm, jumlahRekening, rekening }.
+
+   VALIDASI STRUKTUR: kolom "Kode rekening" HARUS ada. Tanpa ini,
+   GVIZ yang mengembalikan tab pertama (bukan tab yang diminta) akan
+   ikut terbaca sebagai data rekap — itu sebabnya angka Juli–Sept
+   pernah tampil "tidak sesuai" data Drive. Tidak cocok → null →
+   bulan ditampilkan kosong. */
 export async function bacaRekapKumulatif(sheetId, tab) {
   const data = await gviz(sheetId, tab);
-  const rows = (data && data.table && data.table.rows) || [];
+  const tabel = data && data.table;
+  const rows = (tabel && tabel.rows) || [];
   if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  // Cari kolom "Kode rekening" berdasarkan judulnya, bukan posisi
+  // tetap, supaya aman terhadap perubahan urutan kolom.
+  const labels = ((tabel && tabel.cols) || []).map((c) =>
+    String((c && c.label) || "").trim()
+  );
+  const iKode = labels.findIndex((l) => /^kode/i.test(l));
+  if (iKode < 0) return null;
+  const iRealisasi = iKode + 1;
+  const iPic = iKode + 2;
+  const iSpm = iKode + 3;
+  const iStatus = iKode + 4;
 
   const perRekening = new Map();
   let totalBaris = null;
@@ -187,13 +205,17 @@ export async function bacaRekapKumulatif(sheetId, tab) {
     const sel = (r && r.c) || [];
     const v = (i) => (sel[i] ? sel[i].v : null);
 
-    const rekening = v(1);
-    const realisasi = typeof v(2) === "number" ? v(2) : null;
+    const rekening = v(iKode);
+    const realisasi =
+      typeof v(iRealisasi) === "number"
+        ? v(iRealisasi)
+        : nilaiDariSel(sel[iRealisasi]);
     if (realisasi === null) return;
 
-    const pic = typeof v(3) === "string" ? v(3).trim() : "";
-    const spm = typeof v(4) === "number" ? v(4) : null;
-    const status = typeof v(5) === "string" ? v(5).trim() : "";
+    const pic = typeof v(iPic) === "string" ? v(iPic).trim() : "";
+    const spm =
+      typeof v(iSpm) === "number" ? v(iSpm) : nilaiDariSel(sel[iSpm]);
+    const status = typeof v(iStatus) === "string" ? v(iStatus).trim() : "";
 
     // Baris total rekap: hanya kolom realisasi yang terisi. Ambil
     // nilai terbesar agar baris total yang terduplikasi tidak ikut
@@ -201,7 +223,7 @@ export async function bacaRekapKumulatif(sheetId, tab) {
     const adaIsianLain = [v(0), rekening, pic, spm, status].some(
       (x) => x !== null && x !== undefined && x !== ""
     );
-    if (rekening === null && !adaIsianLain) {
+    if ((rekening === null || rekening === "") && !adaIsianLain) {
       totalBaris =
         totalBaris === null ? realisasi : Math.max(totalBaris, realisasi);
       return;
@@ -236,10 +258,21 @@ export async function bacaRekapKumulatif(sheetId, tab) {
   };
 }
 
-/* Baca satu tab rekap kumulatif memakai spreadsheet yang sedang
-   ditautkan di aplikasi (localStorage) — dipakai halaman "Data
-   Kegiatan" agar tidak perlu tahu ID spreadsheet-nya sendiri. */
-export function ambilRekapKumulatif(tab = SHEET_TAB_REKAP) {
+/* Baca tab rekap kumulatif TERBARU yang ada di spreadsheet yang
+   sedang ditautkan di aplikasi (localStorage) — dipakai halaman
+   "Data Kegiatan" agar tidak perlu tahu ID spreadsheet-nya sendiri.
+   Tab terbaru ikut berubah sendiri begitu tab baru ditambahkan di
+   Drive. Bila spreadsheet belum punya tab rekap sama sekali →
+   null (tabel tetap tampil, angkanya mengikuti sumbu Drive). */
+export async function ambilRekapKumulatifTerbaru() {
+  const tab = await tabRekapTerbaruAktif();
+  if (!tab) return null;
+  return bacaRekapKumulatif(sheetIdAktif(), tab);
+}
+
+/* Baca satu tab rekap kumulatif tertentu (nama tab harus benar-benar
+   ada di spreadsheet — ambil dari petaTabRekap / tabRekapTerbaru). */
+export function ambilRekapKumulatif(tab) {
   return bacaRekapKumulatif(sheetIdAktif(), tab);
 }
 
@@ -325,14 +358,27 @@ async function listAnakDrive(folderId) {
   return hasil;
 }
 
-/* ── Bagian 1: seluruh tab rekap kumulatif (murah, boleh sering) ─ */
-async function muatKumulatifSheet() {
+/* ── Bagian 1: seluruh tab rekap kumulatif (murah, boleh sering) ─
+   Nama tab diambil dari daftar tab ASLI spreadsheet, jadi:
+     · tab baru di Drive langsung ikut terbaca (realtime);
+     · tab yang belum ada tidak pernah dipanggil → bulan tersebut
+       tetap kosong, bukan diisi angka tab lain. */
+async function muatKumulatifSheet(paksa = false) {
   const sheetId = sheetIdAktif();
   const kumulatif = {};
   const tabTerbaca = [];
 
+  const peta = await petaTabRekap(sheetId, paksa);
+  // Urut berdasarkan nomor bulan supaya "bulan ini" (selisih dengan
+  // bulan sebelumnya) selalu memakai tab yang tepat.
+  const daftar = Object.keys(peta)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .map((nomor) => ({ nomor, bulan: URUTAN_BULAN[nomor - 1], tab: peta[nomor] }))
+    .filter((x) => x.bulan);
+
   const hasil = await Promise.allSettled(
-    TAB_REKAP_KUMULATIF.map(async ({ bulan, tab }) => {
+    daftar.map(async ({ bulan, tab }) => {
       const rekap = await bacaRekapKumulatif(sheetId, tab);
       return rekap ? { bulan, tab, rekap } : null;
     })
@@ -342,6 +388,7 @@ async function muatKumulatifSheet() {
     if (h.status !== "fulfilled" || !h.value) return;
     const { bulan, tab, rekap } = h.value;
     kumulatif[bulan] = {
+      tab,
       realisasi: rekap.total,
       jumlahSpm: rekap.jumlahSpm,
       jumlahRekening: rekap.jumlahRekening,
@@ -473,7 +520,7 @@ function ambilSheet(paksa) {
   const segar = cacheSheet && Date.now() - cacheSheet.waktu < TTL_SHEET;
   if (segar && !paksa) return Promise.resolve(cacheSheet);
   if (sedangSheet) return sedangSheet;
-  sedangSheet = muatKumulatifSheet()
+  sedangSheet = muatKumulatifSheet(paksa)
     .then((data) => {
       cacheSheet = { ...data, waktu: Date.now() };
       sedangSheet = null;
@@ -542,15 +589,16 @@ function terbitanFallback() {
 
 /* ── Angka realisasi untuk satu bulan tertentu ─────────────────
    `bulanId` = "januari" … "desember" (lihat BULAN_ANGGARAN_OPTIONS).
-   Tab rekap kumulatif sudah bersifat kumulatif sejak Januari, jadi
-   dipakai apa adanya — tidak boleh ditambah dengan angka Drive,
-   karena akan menghitung dua kali.
 
-   Pilihan sumber, berurutan dari yang paling resmi:
-     · bulan punya tab rekap kumulatif  → angka tab itu
-     · bulan setelah jangkauan rekap     → dikosongkan (rekap resmi
-                                           di Drive baru lengkap s.d. Agustus)
-     · selain itu                         → penjumlahan nama SPM di Drive */
+   ATURAN: angka hanya boleh diambil dari SPREADSHEET di Drive, yaitu
+   tab rekap kumulatif bulan itu sendiri ("JAN SD AGUSTUS" dst).
+   Tab-tabnya kumulatif sejak Januari, jadi dipakai apa adanya.
+
+   Bila spreadsheet belum punya tab untuk bulan tersebut, bulan itu
+   DIKOSONGKAN (ada = false) — tidak diisi angka bulan lain, angka
+   turunan dari nama berkas, maupun angka masterData. Begitu tabnya
+   dibuat di Drive, angkanya langsung muncul tanpa perlu mengubah
+   kode.                                                            */
 export function rekapSampaiTahun(data, tahun, bulanId) {
   const kosong = {
     ada: false,
@@ -565,102 +613,59 @@ export function rekapSampaiTahun(data, tahun, bulanId) {
     bulanTerpilihAdaData: false,
     dasar: [],
   };
-  // Tab rekap kumulatif & nama berkas SPM hanya berlaku untuk TA aktif.
+  // Tab rekap kumulatif hanya berlaku untuk TA aktif.
   if (!data || Number(tahun) !== Number(TAHUN_ANGGARAN_AKTIF)) return kosong;
 
   const batas = NOMOR_BULAN[bulanId];
   if (!batas) return kosong;
 
   const kumulatif = data.kumulatif || {};
-  const perBulanDrive = data.perBulan || {};
+  const tab = kumulatif[bulanId];
+  // Tanpa tab untuk bulan ini → belum ada data di spreadsheet.
+  if (!tab) return kosong;
 
-  /* Bulan paling akhir yang punya angka resmi dari spreadsheet —
-     menentukan batas jangkauan rekap. */
-  const bulanResmi = URUTAN_BULAN.filter((id) => kumulatif[id]);
-  const terakhir = bulanResmi.length
-    ? NOMOR_BULAN[bulanResmi[bulanResmi.length - 1]]
-    : null;
+  const dasar = [
+    {
+      id: bulanId,
+      label: (BULAN_ANGGARAN_OPTIONS[batas - 1] || {}).label || bulanId,
+      tab: tab.tab || "",
+      realisasi: Number(tab.realisasi) || 0,
+      jumlahSpm: Number(tab.jumlahSpm) || 0,
+      jumlahBerkas: Number(tab.jumlahSpm) || 0,
+      jumlahRekening: Number(tab.jumlahRekening) || 0,
+      sumber: "Spreadsheet",
+    },
+  ];
 
-  /* Sebulan dari Drive, atau null bila tidak ada berkas SPM. */
-  const driveBulan = (nomor) => {
-    const kunci = `${tahun}-${String(nomor).padStart(2, "0")}`;
-    const v = perBulanDrive[kunci];
-    return v ? { ...v, jumlahRekening: 0 } : null;
-  };
-
-  /* Susun angka bulan terpilih (kumulatif sejak Januari). */
-  let dasar = [];
-  if (kumulatif[bulanId]) {
-    // 1) Bulan ini punya tab rekap resmi → dipakai apa adanya.
-    dasar = [
-      {
-        id: bulanId,
-        label: (BULAN_ANGGARAN_OPTIONS[batas - 1] || {}).label || bulanId,
-        ...kumulatif[bulanId],
-        jumlahBerkas: kumulatif[bulanId].jumlahSpm,
-        sumber: "Spreadsheet",
-      },
-    ];
-  } else if (terakhir && batas > terakhir) {
-    // 2) Bulan SETELAH jangkauan rekap resmi (data di Drive baru
-    //    sampai Agustus) → tidak ada sumber yang bisa dipakai, jadi
-    //    dikosongkan. Lebih baik "—" daripada angka turunan yang
-    //    tidak bisa dipertanggungjawabkan.
-    return kosong;
-  } else {
-    // 3) Bulan sebelum tab rekap pertama, atau sama sekali tidak ada
-    //    tab rekap → jumlahkan nama berkas SPM di Drive.
-    for (let i = 1; i <= batas; i += 1) {
-      const d = driveBulan(i);
-      if (!d) continue;
-      dasar.push({
-        id: URUTAN_BULAN[i - 1],
-        label: (BULAN_ANGGARAN_OPTIONS[i - 1] || {}).label,
-        realisasi: d.realisasi,
-        jumlahSpm: d.jumlahSpm,
-        jumlahBerkas: d.jumlahSpm,
-        jumlahRekening: 0,
-        sumber: "Berkas SPM Drive",
-      });
-    }
-  }
-
-  if (!dasar.length) return kosong;
-
-  const jumlahkan = (list, kunci) =>
-    list.reduce((s, b) => s + (Number(b[kunci]) || 0), 0);
-
-  const memakaiSheet = dasar.filter((b) => b.sumber === "Spreadsheet").length;
-  const memakaiDrive = dasar.length - memakaiSheet;
-  const terakhirDasar = dasar[dasar.length - 1];
-
-  /* Bulan terpilih dikurangi kumulatif s.d. bulan sebelumnya. */
-  const bulanSebelumnya =
-    batas > 1
-      ? rekapSampaiTahun(data, tahun, URUTAN_BULAN[batas - 2])
-      : kosong;
+  /* "Bulan ini" = kumulatif s.d. bulan ini − kumulatif s.d. bulan
+     sebelumnya. Bulan sebelumnya yang tabnya belum ada tidak
+     dihitung, agar selisihnya tidak salah. */
+  const sebelum = batas > 1 ? kumulatif[URUTAN_BULAN[batas - 2]] : null;
 
   return {
     ada: true,
-    realisasi: jumlahkan(dasar, "realisasi"),
-    jumlahSpm: jumlahkan(dasar, "jumlahSpm"),
-    jumlahBerkas: jumlahkan(dasar, "jumlahBerkas"),
-    jumlahRekening: jumlahkan(dasar, "jumlahRekening"),
-    bulanIni: Math.max(0, jumlahkan(dasar, "realisasi") - bulanSebelumnya.realisasi),
-    spmBulanIni: Math.max(0, jumlahkan(dasar, "jumlahSpm") - bulanSebelumnya.jumlahSpm),
-    sumber:
-      memakaiDrive === 0
-        ? "Spreadsheet rekap"
-        : memakaiSheet === 0
-        ? "Berkas SPM Drive"
-        : "Spreadsheet + Berkas SPM Drive",
-    // Bulan terakhir yang benar-benar punya angka. Bila berbeda dari
-    // bulan yang sedang difilter (mis. tab rekap belum dibuat untuk
-    // Oktober), angka di atas adalah data s.d. bulan ini.
-    bulanDasar: terakhirDasar.label || "",
-    // True hanya bila bulan yang difilter itu sendiri punya angka —
-    // bukan sekadar mewarisi angka bulan sebelumnya.
-    bulanTerpilihAdaData: dasar.some((b) => b.id === bulanId),
+    realisasi: dasar[0].realisasi,
+    jumlahSpm: dasar[0].jumlahSpm,
+    jumlahBerkas: dasar[0].jumlahBerkas,
+    jumlahRekening: dasar[0].jumlahRekening,
+    bulanIni: sebelum
+      ? Math.max(0, dasar[0].realisasi - (Number(sebelum.realisasi) || 0))
+      : dasar[0].realisasi,
+    spmBulanIni: sebelum
+      ? Math.max(0, dasar[0].jumlahSpm - (Number(sebelum.jumlahSpm) || 0))
+      : dasar[0].jumlahSpm,
+    sumber: tab.tab ? `Spreadsheet "${tab.tab}"` : "Spreadsheet rekap",
+    bulanDasar: dasar[0].label,
+    bulanTerpilihAdaData: true,
     dasar,
   };
 }
+
+/* Bulan terakhir yang punya tab rekap di spreadsheet — dipakai
+   untuk menjelaskan kenapa bulan berikutnya masih kosong. */
+export function bulanTerakhirKumulatif(data) {
+  const kumulatif = (data && data.kumulatif) || {};
+  const ada = URUTAN_BULAN.filter((id) => kumulatif[id]);
+  return ada.length ? ada[ada.length - 1] : null;
+}
+

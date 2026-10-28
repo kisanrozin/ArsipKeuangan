@@ -1,19 +1,7 @@
-import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from "react";
 import {
   RESUME_VERIFIKASI_JAN_JUNI,
   PAGU_ANGGARAN,
-  AGUSTUS_BIDANG_DETAIL,
-  AGUSTUS_BIDANG_SUMMARY,
-  JULI_BIDANG_DETAIL,
-  JULI_BIDANG_SUMMARY,
-  JUNI_BIDANG_DETAIL,
-  JUNI_BIDANG_SUMMARY,
-  MEI_BIDANG_DETAIL,
-  MEI_BIDANG_SUMMARY,
-  APRIL_BIDANG_DETAIL,
-  APRIL_BIDANG_SUMMARY,
-  MARET_BIDANG_DETAIL,
-  MARET_BIDANG_SUMMARY,
   TAHUN_ANGGARAN,
   TAHUN_ANGGARAN_AKTIF,
   BULAN_ANGGARAN_OPTIONS,
@@ -38,6 +26,10 @@ import {
   revisiDipaBulan,
 } from "../data/rekapDipa";
 import { ambilRingkasanLive, dengarRingkasanLive } from "../data/sp2dLive";
+import {
+  dengarKegiatanTambahan,
+  rekapRealisasiTambahan,
+} from "../data/KegiatanTambahan";
 
 /* ══════════════════════════════════════════════════════════════
    BLOK "RINGKASAN STATISTIK OPERASIONAL"
@@ -62,6 +54,13 @@ import { ambilRingkasanLive, dengarRingkasanLive } from "../data/sp2dLive";
 const BULAN_OPTIONS = BULAN_ANGGARAN_OPTIONS;
 const TAHUN_OPTIONS = [...TAHUN_ANGGARAN].sort((a, b) => b - a);
 
+/* id bulan ("januari" … "desember") → nomor 1…12, dipakai untuk
+   menentukan bulan mana yang sudah ter-update dan mana yang belum. */
+const NOMOR_BULAN = BULAN_OPTIONS.reduce((peta, b, i) => {
+  peta[b.id] = i + 1;
+  return peta;
+}, {});
+
 function formatRupiah(n) {
   const num = Number(n);
   if (!isFinite(num)) return "Rp 0";
@@ -75,69 +74,34 @@ function hitungPersen(realisasi, pagu) {
   return (r / p) * 100;
 }
 
-/* Rekapitulasi realisasi SPM per bulan (dari masterData, sudah s.d. bulan tersebut) */
-const DETAIL_SPM_PER_BULAN = {
-  agustus: AGUSTUS_BIDANG_DETAIL,
-  juli: JULI_BIDANG_DETAIL,
-  juni: JUNI_BIDANG_DETAIL,
-  mei: MEI_BIDANG_DETAIL,
-  april: APRIL_BIDANG_DETAIL,
-  maret: MARET_BIDANG_DETAIL,
-};
-
-const SUMMARY_SPM_PER_BULAN = {
-  agustus: AGUSTUS_BIDANG_SUMMARY,
-  juli: JULI_BIDANG_SUMMARY,
-  juni: JUNI_BIDANG_SUMMARY,
-  mei: MEI_BIDANG_SUMMARY,
-  april: APRIL_BIDANG_SUMMARY,
-  maret: MARET_BIDANG_SUMMARY,
-};
-
-function sumRealisasiSPM(detail) {
-  if (!detail) return 0;
-  return Object.values(detail).reduce((total, rows) => {
-    const list = Array.isArray(rows) ? rows : [];
-    return total + list.reduce((acc, row) => acc + (Number(row && row.realisasi) || 0), 0);
-  }, 0);
-}
-
-function sumJumlahSpm(summary) {
-  if (!summary) return 0;
-  return Object.values(summary).reduce(
-    (acc, row) => acc + (Number(row && row.jumlahSpm) || 0),
-    0
-  );
-}
-
 /* Pagu & realisasi per bulan untuk satu tahun.
-   • TA aktif   → tab "LAPORAN REALISASI SP2D TA 2026" (live), cadangan
-                  masterData (daftar SPM TA aktif).
-   • Tahun lain → hanya PAGU_ANGGARAN.perBulan[tahun]; realisasi & SPM
-                  dikosongkan karena belum ada sumber data tahun itu
-                  (masterData BUKAN data tahun tersebut). */
+   SEMUA angka diambil dari data live (spreadsheet / Google Drive):
+     · pagu      → tab SP2D di spreadsheet, lalu Pagu DIPA Revisi
+                   dari folder DIPA di Drive;
+     · realisasi → tab rekap kumulatif / rekap SPM di spreadsheet.
+   Bila sumbernya belum punya data untuk bulan itu, nilainya 0 sehingga
+   ditampilkan "—" — TIDAK memakai angka manual masterData, supaya yang
+   tampil selalu sama dengan isi Drive. */
 function susunPerBulan(tahunNum, sp2dLive) {
   const tahunAktif = tahunNum === TAHUN_ANGGARAN_AKTIF;
   return BULAN_OPTIONS.map((b) => {
     const liveBulan = tahunAktif ? sp2dLive.nominal?.[b.id] || null : null;
-    const paguManual = Number(PAGU_ANGGARAN.perBulan?.[tahunNum]?.[b.id]) || 0;
-    const masterRealisasi = tahunAktif ? sumRealisasiSPM(DETAIL_SPM_PER_BULAN[b.id]) : 0;
-    const masterSpm = tahunAktif ? sumJumlahSpm(SUMMARY_SPM_PER_BULAN[b.id]) : 0;
     return {
       id: b.id,
       label: b.label,
-      pagu: liveBulan && liveBulan.pagu > 0 ? liveBulan.pagu : paguManual,
-      paguManual,
-      realisasi: liveBulan ? liveBulan.realisasi : masterRealisasi,
-      jumlahSpm: liveBulan && liveBulan.jumlahSpm ? liveBulan.jumlahSpm : masterSpm,
-      jumlahBerkas: tahunAktif && sp2dLive.berkas ? sp2dLive.berkas[b.id] ?? 0 : null,
-      sumber: liveBulan ? "Sheet SP2D" : tahunAktif ? "masterData" : "—",
+      pagu: liveBulan && liveBulan.pagu > 0 ? liveBulan.pagu : 0,
+      paguManual: 0,
+      realisasi: liveBulan ? liveBulan.realisasi : 0,
+      jumlahSpm: liveBulan && liveBulan.jumlahSpm ? liveBulan.jumlahSpm : 0,
+      jumlahBerkas:
+        tahunAktif && sp2dLive.berkas ? sp2dLive.berkas[b.id] ?? 0 : null,
+      sumber: liveBulan ? "Sheet SP2D" : "—",
     };
   });
 }
 
 /* ── Kartu KPI ringkas (dipakai 2x: total & per bulan) ── */
-function StatCard({ title, value, color, progress, note, hint, onClick }) {
+function StatCard({ title, value, color, progress, note, hint, onClick, after }) {
   return (
     <div
       className="stat-card stat-card-plain"
@@ -147,6 +111,7 @@ function StatCard({ title, value, color, progress, note, hint, onClick }) {
     >
       <div className="stat-kpi-title">{title}</div>
       <div className="stat-kpi-value">{value}</div>
+      {after && <div className="stat-kpi-after">{after}</div>}
       {note && <div className="stat-kpi-note">{note}</div>}
       {progress !== undefined && (
         <div className="stat-progress">
@@ -193,6 +158,10 @@ export default function StatistikOperasional({
   setBulan: setBulanKontrol,
   tahun: tahunKontrol,
   setTahun: setTahunKontrol,
+  /* Dipanggil setiap kali pengguna mengganti filter tahun/bulan.
+     Dipakai beranda admin untuk meneruskan periode yang sama ke
+     halaman Data Kegiatan. */
+  onFilterChange,
 }) {
   /* Filter bisa "dikendalikan" (controlled) oleh induk. Bila tidak
      diberi, blok ini mengelola sendiri — nilai awalnya selalu
@@ -206,10 +175,14 @@ export default function StatistikOperasional({
   const gantiBulan = (nilai) => {
     if (typeof bulanKontrol !== "string") setBulanInternal(nilai);
     if (setBulanKontrol) setBulanKontrol(nilai);
+    /* Teruskan periode terpilih ke induk (beranda admin) supaya
+       filter di halaman Data Kegiatan ikut berganti. */
+    if (onFilterChange) onFilterChange({ bulan: nilai, tahun });
   };
   const gantiTahun = (nilai) => {
     if (typeof tahunKontrol !== "string") setTahunInternal(nilai);
     if (setTahunKontrol) setTahunKontrol(nilai);
+    if (onFilterChange) onFilterChange({ tahun: nilai, bulan });
   };
 
   const [live, setLive] = useState({
@@ -235,6 +208,11 @@ export default function StatistikOperasional({
      Ini sumber utama angka kartu "Realisasi Bulan (Rp.)". */
   const [rekapSpm, setRekapSpm] = useState(null);
   useEffect(() => dengarRekapSpm(setRekapSpm), []);
+  /* Data kegiatan yang diimpor lewat drag & drop folder (localStorage).
+     Realisasi per bulan dari sumber ini ditambahkan ke angka Drive agar
+     Dashboard ikut berubah seketika setelah folder dijatuhkan. */
+  const [tambahanLive, setTambahanLive] = useState([]);
+  useEffect(() => dengarKegiatanTambahan(setTambahanLive), []);
   const [revisiLive, setRevisiLive] = useState(null);
   useEffect(() => dengarRevisiDipa(setRevisiLive), []);
 
@@ -263,6 +241,11 @@ export default function StatistikOperasional({
       if (setBulanKontrol) setBulanKontrol(bulanBerjalan);
       if (typeof tahunKontrol !== "string") setTahunInternal(tahunBerjalan);
       if (setTahunKontrol) setTahunKontrol(tahunBerjalan);
+      /* Periode berjalan baru juga diteruskan ke induk supaya filter
+         di halaman lain (Data Kegiatan/Histori) ikut menyesuaikan. */
+      if (onFilterChange) {
+        onFilterChange({ bulan: bulanBerjalan, tahun: tahunBerjalan });
+      }
     };
 
     const id = setInterval(samakanPeriode, 30000);
@@ -278,7 +261,7 @@ export default function StatistikOperasional({
       window.removeEventListener("focus", onFokus);
       document.removeEventListener("visibilitychange", onVisibilitas);
     };
-  }, [bulanKontrol, setBulanKontrol, tahunKontrol, setTahunKontrol]);
+  }, [bulanKontrol, setBulanKontrol, tahunKontrol, setTahunKontrol, onFilterChange]);
 
   // Posisi scroll saat filter berubah, supaya angka yang berubah tidak
   // membuat halaman melompat (tampilannya seakan "refresh").
@@ -361,13 +344,12 @@ export default function StatistikOperasional({
     };
   }, [pollMs]);
 
-  // ── Angka pagu (konstanta masterData) & realisasi (data master) ──
-  // Data live (tab spreadsheet + folder Drive) menggantikan angka master
-  // bila tersedia; bila tidak, masterData tetap dipakai sebagai cadangan.
+  // ── Angka pagu & realisasi: SELALU dari data live (Drive) ──
+  // Tidak ada lagi angka manual per bulan sebagai cadangan; bulan
+  // yang datanya belum ada di Drive ditampilkan "—".
   const tahunNum = Number(tahun) || TAHUN_ANGGARAN_AKTIF;
-  // Data live (spreadsheet/Drive) & cadangan masterData hanya berisi
-  // data TA aktif. Tahun lain hanya memakai angka yang memang diisi
-  // per tahun (PAGU_ANGGARAN.perBulan) — selebihnya dikosongkan.
+  // Data live (spreadsheet/Drive) hanya berisi data TA aktif, jadi
+  // tahun anggaran lain otomatis dikosongkan.
   const tahunAktifDipilih = tahunNum === TAHUN_ANGGARAN_AKTIF;
 
   const sp2dPerBulan = useMemo(
@@ -400,58 +382,63 @@ export default function StatistikOperasional({
     [revisiLive, tahunNum]
   );
 
-  const dataBulan = useMemo(() => {
-    const opsi = BULAN_OPTIONS.find((b) => b.id === bulan);
-    const baris = sp2dPerBulan.find((r) => r.id === bulan) || {};
+  /* Realisasi per bulan dari data impor folder (drag & drop). */
+  const imporPerBulan = useMemo(
+    () => rekapRealisasiTambahan(tambahanLive),
+    [tambahanLive]
+  );
+
+  /* Hitung angka satu bulan. Dipakai dua tempat:
+       · `dataBulan` — mengikuti filter Bulan (kartu-kartu);
+       · `dataTabel`  — bulan terakhir yang datanya sudah ter-update
+                        (tabel "Pagu & Realisasi"). */
+  const hitungDataBulan = useCallback((bulanId, opsiHitung = {}) => {
+    const opsi = BULAN_OPTIONS.find((b) => b.id === bulanId);
+    const baris = sp2dPerBulan.find((r) => r.id === bulanId) || {};
     const pagu = Number(baris.pagu) || 0;
     // Revisi DIPA yang berlaku s.d. akhir bulan ini (dihitung di
     // memo `rekapDipa` di atas dari folder DIPA di Drive).
-    const revisi = revisiDipaBulan(rekapDipa, bulan);
+    const revisi = revisiDipaBulan(rekapDipa, bulanId);
 
-    /* Realisasi utama diambil langsung dari spreadsheet yang sama
-       dengan halaman "Data Kegiatan" — tab rekap kumulatif s.d.
-       bulan terpilih (JAN SD …, dst). Bila tab bulan ini belum
-       tersedia / belum terbaca, turun ke rekap SPM, lalu angka
-       masterData sebagai cadangan. */
-    const kegiatan = rekapSampaiTahun(rekapKegiatan, tahunNum, bulan);
+    /* Realisasi hanya boleh berasal dari SPREADSHEET di Drive:
+       1) tab rekap kumulatif bulan ini (spreadsheet Data Kegiatan);
+       2) tab rekap SPM bulan ini ("Rekap SPM kumulatif per bulan").
+       Bila keduanya belum punya tab untuk bulan ini → kosong (0),
+       tanpa cadangan angka manual, supaya tidak pernah menampilkan
+       angka yang bukan isi Drive. */
+    const kegiatan = rekapSampaiTahun(rekapKegiatan, tahunNum, bulanId);
     const pakaiKegiatan = kegiatan.ada && kegiatan.realisasi > 0;
 
-    const spm = rekapRealisasiSpm(rekapSpm, tahunNum, bulan);
+    const spm = rekapRealisasiSpm(rekapSpm, tahunNum, bulanId);
     const pakaiSpm = !pakaiKegiatan && spm.ada && spm.total > 0;
 
-    const realisasi = pakaiKegiatan
+    const nomorBulanIni = NOMOR_BULAN[bulanId] || 0;
+    const kunciImpor = nomorBulanIni
+      ? `${tahunNum}-${String(nomorBulanIni).padStart(2, "0")}`
+      : "";
+    const realisasiImpor = kunciImpor
+      ? Number(imporPerBulan[kunciImpor]) || 0
+      : 0;
+
+    const realisasiDrive = pakaiKegiatan
       ? kegiatan.realisasi
       : pakaiSpm
       ? spm.total
-      : Number(baris.realisasi) || 0;
+      : 0;
+    /* Realisasi impor folder ditambahkan ke angka Drive: berkas hasil
+       drag & drop tidak otomatis menulis ke spreadsheet, jadi angka
+       inilah yang membuat realisasi bulan langsung ter-update. */
+    const realisasi = realisasiDrive + realisasiImpor;
     // Baris "Total" rekap SPM tidak menyediakan jumlah SPM, jadi hanya
-    // diisi dari sumber lain (kegiatan/masterData) bila tersedia.
-    const jumlahSpm = pakaiKegiatan
-      ? kegiatan.jumlahSpm
-      : pakaiSpm
-      ? 0
-      : Number(baris.jumlahSpm) || 0;
+    // diisi dari sumber rekap kumulatif bila tersedia.
+    const jumlahSpm = pakaiKegiatan ? kegiatan.jumlahSpm : 0;
 
-    // Bila pagu per bulan belum diisi, pakai nominal Revisi DIPA —
-    // inilah nominal yang ditampilkan pada kartu "Pagu Bulan", jadi
-    // persentase ikut memakainya supaya tidak selalu 0,00%.
-    const paguDipakai = pagu > 0 ? pagu : revisi ? revisi.nominal : 0;
-
-    /* Persentase hanya dihitung bila bulan terpilih benar-benar punya
-       data — ada realisasi DAN ada pagu pembanding. Bila datanya belum
-       ada, `persen` dibiarkan null supaya kartu menampilkan "—",
-       bukan "0,00%" yang menyesatkan. */
-    const adaDataBulan = pakaiKegiatan
-      ? kegiatan.bulanTerpilihAdaData && realisasi > 0
-      : pakaiSpm
-      ? realisasi > 0
-      : realisasi > 0;
-    const persen =
-      adaDataBulan && paguDipakai > 0 ? hitungPersen(realisasi, paguDipakai) : null;
-
-    /* Bulan terakhir yang punya rekap resmi di Drive — dipakai untuk
-       menjelaskan kenapa bulan terpilih masih kosong. Sumber utama
-       spreadsheet Data Kegiatan; cadangan rekap SPM. */
+    /* ── Batas bulan yang datanya sudah ter-update di Drive ──────
+       "Ter-update" = bulan yang angkanya benar-benar sudah masuk ke
+       spreadsheet: ada tab rekap kumulatif (mis. "JAN SD SEPTEMBER"),
+       ada rekap SPM, atau ada baris SP2D. Bulan SESUDAH batas itu
+       (mis. Oktober–Desember saat rekap terakhir masih September)
+       BELUM ter-update.                                                */
     const kumulatif = (rekapKegiatan && rekapKegiatan.kumulatif) || {};
     const batasOpsi = BULAN_OPTIONS.filter((b) => kumulatif[b.id]);
     const idSpmTerakhir = bulanTerakhirDenganData(rekapSpm);
@@ -465,6 +452,49 @@ export default function StatistikOperasional({
       ? labelSpmTerakhir
       : "";
 
+    const nomorBulan = NOMOR_BULAN;
+    // Bulan yang punya data impor folder juga dianggap sudah ter-update,
+    // supaya pagu/realisasi bulan itu tidak dikosongkan.
+    const nomorBulanImpor = Object.keys(imporPerBulan)
+      .filter((ym) => ym.startsWith(`${tahunNum}-`))
+      .map((ym) => Number(ym.slice(5, 7)) || 0);
+    const bulanTerakhirTerupdate = [
+      batasOpsi.length ? nomorBulan[batasOpsi[batasOpsi.length - 1].id] : 0,
+      idSpmTerakhir ? nomorBulan[idSpmTerakhir] : 0,
+      ...Object.keys(sp2dLive.nominal || {}).map((id) => nomorBulan[id] || 0),
+      ...nomorBulanImpor,
+    ].reduce((a, b) => Math.max(a, b), 0);
+
+    const bulanBelumTerupdate =
+      !opsiHitung.abaikanBatasUpdate &&
+      bulanTerakhirTerupdate > 0 &&
+      (nomorBulan[bulanId] || 0) > bulanTerakhirTerupdate;
+
+    /* Pagu bulan ini: tab SP2D di spreadsheet, lalu nominal pagu DIPA
+       Revisi dari folder DIPA di Drive sebagai cadangan (keduanya data
+       Drive).
+
+       Hanya bulan yang BELUM ter-update yang dikosongkan. Sundanya
+       ditahan: bulan yang sudah ter-update tetap memakai pagu DIPA
+       Revisi bila tab SP2D belum memuat kolom pagu — kalau tidak,
+       satu bulan yang pagu SP2D-nya kosong ikut membuat SELURUH
+       kolom pagu kosong, padahal bulan lain datanya sudah ada.       */
+    const paguDipakai = bulanBelumTerupdate
+      ? 0
+      : pagu > 0
+      ? pagu
+      : revisi
+      ? revisi.nominal
+      : 0;
+
+    /* Persentase hanya dihitung bila bulan terpilih benar-benar punya
+       data — ada realisasi DAN ada pagu pembanding. Bila datanya belum
+       ada, `persen` dibiarkan null supaya kartu menampilkan "—",
+       bukan "0,00%" yang menyesatkan. */
+    const adaDataBulan = realisasi > 0;
+    const persen =
+      adaDataBulan && paguDipakai > 0 ? hitungPersen(realisasi, paguDipakai) : null;
+
     /* Tahun selain TA aktif yang sama sekali belum punya data (pagu,
        revisi DIPA, maupun realisasi) → semua kolom tampil "—" dengan
        keterangan "Data TA <tahun> belum tersedia". */
@@ -472,7 +502,7 @@ export default function StatistikOperasional({
       !tahunAktifDipilih && !(paguDipakai > 0) && !(realisasi > 0);
 
     return {
-      label: opsi ? opsi.label : bulan,
+      label: opsi ? opsi.label : bulanId,
       tahunLabel: tahunNum,
       tanpaDataTahun,
       pagu,
@@ -484,18 +514,38 @@ export default function StatistikOperasional({
       // supaya "—" tidak tertukar dengan "memang tidak ada datanya".
       memuatDipa: revisiLive === null && tahunAktifDipilih,
       memuatRekap:
-        rekapSpm === null && rekapKegiatan === null && tahunAktifDipilih,
-      sumber: pakaiKegiatan
-        ? kegiatan.sumber
-        : pakaiSpm
-        ? spm.sumber
-        : baris.sumber || "masterData",
+        rekapSpm === null &&
+        rekapKegiatan === null &&
+        tahunAktifDipilih &&
+        realisasiImpor <= 0,
+      sumber:
+        realisasiImpor > 0
+          ? `${
+              pakaiKegiatan
+                ? kegiatan.sumber
+                : pakaiSpm
+                ? spm.sumber
+                : "Impor folder (drag & drop)"
+            } + impor folder`
+          : pakaiKegiatan
+          ? kegiatan.sumber
+          : pakaiSpm
+          ? spm.sumber
+          : "Belum ada data di spreadsheet Drive",
+      realisasiDrive,
+      realisasiImpor,
       jumlahBerkas: baris.jumlahBerkas ?? null,
       revisi,
       persen,
       adaDataBulan,
       jumlahSpm,
       bulanBatasRekap,
+      // Bulan ini belum ter-update di spreadsheet/Drive → pagu (dan
+      // persentase) dikosongkan, bukan menampilkan angka carry-forward.
+      bulanBelumTerupdate,
+      bulanTerakhirTerupdate: bulanTerakhirTerupdate
+        ? (BULAN_OPTIONS[bulanTerakhirTerupdate - 1] || {}).label || ""
+        : "",
       // Bulan terakhir yang pagu Revisi DIPA-nya masih terisi, dipakai
       // untuk menjelaskan kenapa bulan berikutnya masih kosong.
       bulanBatasDipa: rekapDipa.bulanTerakhirData,
@@ -506,11 +556,63 @@ export default function StatistikOperasional({
         : pakaiSpm
         ? spm.bulanDasar
         : "",
-      live: pakaiSpm || pakaiKegiatan,
+      live: pakaiSpm || pakaiKegiatan || realisasiImpor > 0,
       pakaiKegiatan,
       pakaiSpm,
+      adaImpor: realisasiImpor > 0,
     };
-  }, [bulan, tahunNum, tahunAktifDipilih, sp2dPerBulan, rekapKegiatan, rekapSpm, rekapDipa, revisiLive]);
+  }, [
+    tahunNum,
+    tahunAktifDipilih,
+    sp2dPerBulan,
+    sp2dLive,
+    rekapKegiatan,
+    rekapSpm,
+    rekapDipa,
+    revisiLive,
+    imporPerBulan,
+  ]);
+
+  /* `dataBulan` mengikuti filter Bulan (dipakai kartu-kartu di atas). */
+  const dataBulan = useMemo(
+    () => hitungDataBulan(bulan),
+    [hitungDataBulan, bulan]
+  );
+
+  /* Bulan dari revisi DIPA TERAKHIR yang nominal pagunya sudah
+     ter-update di Drive (contoh: DIPA Revisi 10 ditetapkan 31 Juli
+     2026 → bulan Juli). Dipakai tabel "Pagu & Realisasi": yang
+     ditampilkan hanya bulan pagu revisi terakhir beserta realisasi
+     bulan tersebut, supaya langsung terlihat data sudah berganti
+     sampai revisi/bulan mana. */
+  const bulanRevisiTerbaru = useMemo(() => {
+    if (!tahunAktifDipilih) return bulan;
+    const baris = (rekapDipa.rows || []).filter(
+      (r) =>
+        Number(r.nomor) > 0 &&
+        Number(r.pagu) > 0 &&
+        !Number.isNaN(Number(r.waktu))
+    );
+    if (baris.length === 0) return bulan;
+    /* Revisi dengan tanggal penetapan paling baru. */
+    const terbaru = baris.reduce((a, b) =>
+      Number(b.waktu) > Number(a.waktu) ? b : a
+    );
+    const tanggalRevisi = new Date(Number(terbaru.waktu));
+    /* Revisi 1 kadang ditetapkan Desember tahun sebelumnya — pagunya
+       berlaku mulai Januari tahun anggaran berjalan. */
+    const idx =
+      tanggalRevisi.getFullYear() < tahunNum ? 0 : tanggalRevisi.getMonth();
+    return (BULAN_OPTIONS[idx] || {}).id || bulan;
+  }, [tahunAktifDipilih, tahunNum, rekapDipa, bulan]);
+
+  /* Data yang ditampilkan tabel "Pagu & Realisasi": bulan pagu revisi
+     terakhir + realisasinya. Pagu revisi tetap ditampilkan walau
+     realisasi bulan itu belum ter-update. */
+  const dataTabel = useMemo(
+    () => hitungDataBulan(bulanRevisiTerbaru, { abaikanBatasUpdate: true }),
+    [hitungDataBulan, bulanRevisiTerbaru]
+  );
 
   const pesanTanpaData = `Data TA ${tahunNum} belum tersedia`;
 
@@ -542,153 +644,10 @@ export default function StatistikOperasional({
             />
             Ringkasan Statistik Operasional
           </span>
-          {readOnly && (
-            <span
-              className="tm-inline-badge"
-              title="Tamu melihat data yang sudah diinput/diunggah admin — tanpa kendali"
-            >
-              👁 Mode Tamu · baca saja
-            </span>
-          )}
-          <span style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            backgroundColor: "#ecfdf5",
-            color: "#059669",
-            fontSize: 11.5,
-            fontWeight: 600,
-            padding: "3px 10px",
-            borderRadius: 20,
-            border: "1px solid #a7f3d0"
-          }}>
-            <span style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              backgroundColor: "#10b981",
-              boxShadow: "0 0 0 2px rgba(16, 185, 129, 0.4)",
-              display: "inline-block"
-            }}></span>
-            Live Sync Aktif
-          </span>
-          <span
-            title={
-              sp2dLive.statusNominal === "live"
-                ? `Nominal diambil dari tab "${SP2D_SHEET_TAB}"`
-                : `Tab "${SP2D_SHEET_TAB}" belum terbaca (${sp2dLive.statusNominal}) — memakai data master`
-            }
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-              backgroundColor: sp2dLive.statusNominal === "live" ? "#eff6ff" : "#fef3c7",
-              color: sp2dLive.statusNominal === "live" ? "#1d4ed8" : "#92400e",
-              fontSize: 11.5,
-              fontWeight: 600,
-              padding: "3px 10px",
-              borderRadius: 20,
-              border: "1px solid #dbeafe",
-            }}
-          >
-            SP2D Sheet: {sp2dLive.statusNominal === "live" ? "Live" : "Master"}
-          </span>
-          <span
-            title={
-              sp2dLive.statusBerkas === "live"
-                ? "Jumlah berkas dihitung langsung dari folder Google Drive"
-                : "Isi SP2D_FOLDER_ID di src/data/masterData.js agar jumlah berkas live dari Drive"
-            }
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-              backgroundColor: sp2dLive.statusBerkas === "live" ? "#eff6ff" : "#f1f5f9",
-              color: sp2dLive.statusBerkas === "live" ? "#1d4ed8" : "#475569",
-              fontSize: 11.5,
-              fontWeight: 600,
-              padding: "3px 10px",
-              borderRadius: 20,
-              border: "1px solid #dbeafe",
-            }}
-          >
-            Berkas Drive:{" "}
-            {sp2dLive.statusBerkas === "live"
-              ? "Live"
-              : sp2dLive.statusBerkas === "belum-diatur"
-              ? "Belum diatur"
-              : "—"}
-          </span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {/* Tombol sinkron hanya untuk admin — tamu tidak mengubah data. */}
-          {!readOnly && (
-            <button
-              onClick={sinkronkan}
-              disabled={isRefreshing}
-              title="Perbarui data dari Drive dan Spreadsheet sekarang"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "6px 13px",
-                fontSize: 12,
-                fontWeight: 600,
-                color: "#1e3a8a",
-                backgroundColor: "#eff6ff",
-                border: "1px solid #bfdbfe",
-                borderRadius: 6,
-                cursor: isRefreshing ? "wait" : "pointer",
-                transition: "all 0.2s"
-              }}
-            >
-              <span style={{
-                display: "inline-block",
-                transform: isRefreshing ? "rotate(360deg)" : "none",
-                transition: isRefreshing ? "transform 0.6s linear" : "none"
-              }}>
-                🔄
-              </span>
-              {isRefreshing ? "Menyinkronkan..." : "Sinkronkan Sekarang"}
-            </button>
-          )}
-          {stats.lastSync && (
-            <span style={{ fontSize: 11.5, color: "#64748b" }}>
-              Terakhir diperbarui: pk. {stats.lastSync} WIB
-            </span>
-          )}
         </div>
       </div>
 
-      {/* ══ 1. Ringkasan Anggaran: Pagu / Realisasi / Persentase ══ */}
-      <div className="stat-row stat-row-3" style={{ marginBottom: 34 }}>
-        <StatCard
-          title="Total Pagu (Rp.)"
-          value={formatRupiah(paguTotal)}
-          color="#1B2A6B"
-          note="DIPA / RKKS 2026"
-          hint="Nilai pagu diisi manual di src/data/masterData.js → PAGU_ANGGARAN.total"
-          onClick={readOnly ? undefined : () => setActivePage && setActivePage("proses-bisnis")}
-        />
-        <StatCard
-          title="Total Realisasi SPM (Rp.)"
-          value={formatRupiah(realisasiTotal)}
-          color="#0284c7"
-          note={
-            adaDataLive
-              ? `Akumulasi tab "${SP2D_SHEET_TAB}" (live)`
-              : "Akumulasi SP2D terverifikasi ↗"
-          }
-          onClick={readOnly ? undefined : () => setActivePage && setActivePage("proses-bisnis")}
-        />
-        <StatCard
-          title="Persentase Realisasi"
-          value={`${persenTotal.toFixed(2)}%`}
-          color="#10b981"
-          progress={persenTotal}
-          note="Realisasi ÷ Total Pagu"
-        />
-      </div>
+
 
       {/* ══ 2. Realisasi Data Per Bulan (+ filter tahun & bulan) ══ */}
       <div className="stat-subheading-row">
@@ -725,10 +684,18 @@ export default function StatistikOperasional({
         </div>
       </div>
       <div className="stat-row stat-row-3" style={{ marginBottom: 40 }}>
+        {/* Kartu "Pagu Bulan (Rp.)": keterangan revisi DIPA yang berlaku
+            pada bulan ini tampil tepat di bawah nominal pagu, mis.
+            "DIPA Revisi 10 · 31 Juli 2026". */}
         <StatCard
           title="Pagu Bulan (Rp.)"
           value={
             dataBulan.adaPagu ? formatRupiah(dataBulan.paguDipakai) : "—"
+          }
+          after={
+            dataBulan.revisi
+              ? `${dataBulan.revisi.dipa} · ${dataBulan.revisi.tanggal}`
+              : undefined
           }
           color="#d97706"
           note={
@@ -736,23 +703,26 @@ export default function StatistikOperasional({
               ? pesanTanpaData
               : dataBulan.memuatDipa && !dataBulan.adaPagu
               ? "Memuat pagu DIPA dari Google Drive…"
+              : dataBulan.bulanBelumTerupdate
+              ? "Kosong — bulan ini belum ter-update di spreadsheet"
+              : dataBulan.pagu > 0
+              ? "Dari tab SP2D di spreadsheet Drive"
               : dataBulan.adaPagu
-              ? `Pagu alokasi ${dataBulan.label} ${dataBulan.tahunLabel} · ${
-                  dataBulan.revisi
-                    ? `DIPA Revisi ${dataBulan.revisi.nomor} (${dataBulan.revisi.tanggal})`
-                    : dataBulan.pagu > 0
-                    ? "sumber: masterData"
-                    : "belum diisi"
-                }`
-              : "Belum ada data pagu bulan ini"
+              ? ""
+              : "Belum ada pagu yang tercatat untuk bulan ini"
           }
           hint={
             dataBulan.tanpaDataTahun
               ? `Belum ada sumber data pagu untuk TA ${dataBulan.tahunLabel}.`
+              : dataBulan.bulanBelumTerupdate
+              ? `Data di spreadsheet/Drive baru ter-update sampai ${dataBulan.bulanTerakhirTerupdate} ${dataBulan.tahunLabel}, jadi pagu ${dataBulan.label} dikosongkan — bukan menampilkan angka bulan sebelumnya.` +
+                (dataBulan.revisi
+                  ? ` Pagu ${dataBulan.revisi.dipa} yang berlaku tetap tampil di kolom "Pagu DIPA Revisi".`
+                  : "")
+              : dataBulan.pagu > 0
+              ? "Nominal pagu bulan ini dibaca dari tab SP2D di spreadsheet Drive."
               : dataBulan.adaPagu && dataBulan.revisi
-              ? `Pagu bulan ini memakai pagu ${dataBulan.revisi.dipa} yang berlaku sejak ${dataBulan.revisi.tanggal} (sumber: ${dataBulan.revisi.sumber}).`
-              : dataBulan.adaPagu
-              ? "Nominal diisi manual di src/data/masterData.js → PAGU_ANGGARAN.perBulan"
+              ? `Tab SP2D belum memuat pagu per bulan, jadi pagu bulan ini memakai pagu ${dataBulan.revisi.dipa} yang berlaku sejak ${dataBulan.revisi.tanggal} (sumber: ${dataBulan.revisi.sumber}).`
               : dataBulan.bulanBatasDipa
               ? `Pagu DIPA Revisi baru terisi sampai ${dataBulan.bulanBatasDipa}.`
               : "Belum ada pagu yang tercatat untuk bulan ini."
@@ -773,6 +743,11 @@ export default function StatistikOperasional({
               ? `Kumulatif s.d. ${dataBulan.bulanDasar || dataBulan.label} ${dataBulan.tahunLabel}` +
                 (dataBulan.jumlahSpm > 0
                   ? ` · ${dataBulan.jumlahSpm.toLocaleString("id-ID")} SPM`
+                  : "") +
+                (dataBulan.adaImpor
+                  ? ` · termasuk impor folder ${formatRupiah(
+                      dataBulan.realisasiImpor
+                    )}`
                   : "")
               : "Belum ada data realisasi bulan ini"
           }
@@ -783,7 +758,9 @@ export default function StatistikOperasional({
               ? `Sumber: ${dataBulan.sumber} — ${
                   dataBulan.pakaiKegiatan
                     ? "tab rekap kumulatif pada spreadsheet yang sama dengan halaman \"Data Kegiatan\""
-                    : "\"Total Realisasi SPM\" pada spreadsheet \"Rekap SPM kumulatif per bulan\" (folder Arsip Digital)"
+                    : dataBulan.pakaiSpm
+                    ? "\"Total Realisasi SPM\" pada spreadsheet \"Rekap SPM kumulatif per bulan\" (folder Arsip Digital)"
+                    : "data impor folder yang dijatuhkan di halaman \"Data Kegiatan\" (tersimpan di browser ini)"
                 }, jadi ikut berubah realtime.` +
                 (dataBulan.bulanDasar && dataBulan.bulanDasar !== dataBulan.label
                   ? ` Data terbaru tersedia s.d. ${dataBulan.bulanDasar}.`
@@ -815,22 +792,36 @@ export default function StatistikOperasional({
               : !dataBulan.adaDataBulan
               ? "Belum ada data realisasi bulan ini"
               : !dataBulan.adaPagu
-              ? "Pagu bulan ini belum tersedia"
+              ? dataBulan.bulanBelumTerupdate
+                ? "Bulan ini belum ter-update di spreadsheet"
+                : "Pagu bulan ini belum tersedia"
               : "Realisasi ÷ Pagu Bulan"
           }
         />
       </div>
 
-      {/* ── Tabel Pagu & Realisasi bulan terpilih (dari filter bulan) ── */}
+      {/* ── Tabel Pagu & Realisasi — hanya bulan terakhir yang sudah
+             ter-update, supaya terlihat data berganti sampai bulan mana ── */}
       <div className="stat-table-wrap" style={{ marginBottom: 34 }}>
         <div className="stat-table-caption">
-          Pagu &amp; Realisasi {dataBulan.label} {dataBulan.tahunLabel}
-          {dataBulan.revisi
-            ? ` — pagu ${dataBulan.revisi.dipa} (${dataBulan.revisi.tanggal})`
+          Pagu &amp; Realisasi {dataTabel.label} {dataTabel.tahunLabel}
+          {dataTabel.revisi
+            ? ` — DIPA berlaku: ${dataTabel.revisi.dipa} (${dataTabel.revisi.tanggal})`
             : ""}
-          {dataBulan.tanpaDataTahun && (
+          {(dataTabel.adaPagu || dataTabel.adaDataBulan) && (
             <span style={{ fontWeight: 400, color: "#64748b" }}>
-              {" "}— data TA {dataBulan.tahunLabel} belum tersedia
+              {" "}— pagu revisi ter-update terakhir
+            </span>
+          )}
+          {dataTabel.bulanBelumTerupdate && (
+            <span style={{ fontWeight: 400, color: "#64748b" }}>
+              {" "}— data ter-update s.d. {dataTabel.bulanTerakhirTerupdate}{" "}
+              {dataTabel.tahunLabel}
+            </span>
+          )}
+          {dataTabel.tanpaDataTahun && (
+            <span style={{ fontWeight: 400, color: "#64748b" }}>
+              {" "}— data TA {dataTabel.tahunLabel} belum tersedia
             </span>
           )}
         </div>
@@ -838,55 +829,20 @@ export default function StatistikOperasional({
           <thead>
             <tr>
               <th style={{ textAlign: "left" }}>Bulan</th>
-              <th style={{ textAlign: "right" }}>Pagu Bulan (Rp)</th>
               <th style={{ textAlign: "right" }}>Pagu DIPA Revisi (Rp)</th>
               <th style={{ textAlign: "right" }}>Realisasi (Rp)</th>
-              <th style={{ textAlign: "right", width: 96 }}>Persentase</th>
-              <th style={{ textAlign: "right" }}>SPM</th>
-              <th style={{ textAlign: "right" }}>Berkas (Drive)</th>
             </tr>
           </thead>
           <tbody>
             <tr>
               <td>
                 <span className="stat-table-dot" style={{ background: "#d97706" }} />
-                {dataBulan.label}
+                {dataTabel.label}
               </td>
               <td className="num">
-                {dataBulan.adaPagu ? (
+                {dataTabel.revisi ? (
                   <>
-                    {formatRupiah(dataBulan.paguDipakai)}
-                    {dataBulan.revisi && (
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: "#64748b",
-                          fontWeight: 400,
-                        }}
-                      >
-                        {dataBulan.revisi.dipa} · {dataBulan.revisi.tanggal}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <span
-                    className="dk-kosong"
-                    title={
-                      dataBulan.memuatDipa
-                        ? "Memuat pagu DIPA dari Google Drive…"
-                        : dataBulan.bulanBatasDipa
-                        ? `Pagu DIPA Revisi baru terisi sampai ${dataBulan.bulanBatasDipa}.`
-                        : "Belum ada pagu yang tercatat untuk bulan ini."
-                    }
-                  >
-                    —
-                  </span>
-                )}
-              </td>
-              <td className="num">
-                {dataBulan.revisi ? (
-                  <>
-                    {formatRupiah(dataBulan.revisi.nominal)}
+                    {formatRupiah(dataTabel.revisi.nominal)}
                     <div
                       style={{
                         fontSize: 11,
@@ -894,16 +850,16 @@ export default function StatistikOperasional({
                         fontWeight: 400,
                       }}
                     >
-                      {dataBulan.revisi.dipa} · {dataBulan.revisi.tanggal}
+                      {dataTabel.revisi.dipa} · {dataTabel.revisi.tanggal}
                     </div>
                   </>
                 ) : (
                   <span
                     className="dk-kosong"
                     title={
-                      dataBulan.bulanBatasDipa
-                        ? `Belum ada revisi DIPA dengan nominal pagu yang berlaku pada ${dataBulan.label}. Pagu terisi sampai ${dataBulan.bulanBatasDipa}.`
-                        : `Belum ada revisi DIPA yang berlaku pada ${dataBulan.label}.`
+                      dataTabel.bulanBatasDipa
+                        ? `Belum ada revisi DIPA dengan nominal pagu yang berlaku pada ${dataTabel.label}. Pagu terisi sampai ${dataTabel.bulanBatasDipa}.`
+                        : `Belum ada revisi DIPA yang berlaku pada ${dataTabel.label}.`
                     }
                   >
                     —
@@ -911,47 +867,22 @@ export default function StatistikOperasional({
                 )}
               </td>
               <td className="num">
-                {dataBulan.adaDataBulan ? (
-                  formatRupiah(dataBulan.realisasi)
+                {dataTabel.adaDataBulan ? (
+                  formatRupiah(dataTabel.realisasi)
                 ) : (
                   <span
                     className="dk-kosong"
                     title={
-                      dataBulan.tanpaDataTahun
+                      dataTabel.tanpaDataTahun
                         ? pesanTanpaData
-                        : dataBulan.bulanBatasRekap
-                        ? `Rekap resmi di Drive baru lengkap sampai ${dataBulan.bulanBatasRekap}`
+                        : dataTabel.bulanBatasRekap
+                        ? `Rekap resmi di Drive baru lengkap sampai ${dataTabel.bulanBatasRekap}`
                         : "Belum ada data realisasi bulan ini"
                     }
                   >
                     —
                   </span>
                 )}
-              </td>
-              <td className="num pct">
-                {dataBulan.persen === null ? (
-                  <span className="dk-kosong" title="Belum ada data realisasi bulan ini">
-                    —
-                  </span>
-                ) : (
-                  <>
-                    <span style={{ color: "#10b981" }}>
-                      {dataBulan.persen.toFixed(2)}%
-                    </span>
-                    <span className="stat-mini-bar">
-                      <span
-                        style={{
-                          width: `${Math.max(0, Math.min(100, dataBulan.persen))}%`,
-                          background: "#10b981",
-                        }}
-                      />
-                    </span>
-                  </>
-                )}
-              </td>
-              <td className="num">{dataBulan.jumlahSpm || "—"}</td>
-              <td className="num">
-                {dataBulan.jumlahBerkas === null ? "—" : dataBulan.jumlahBerkas}
               </td>
             </tr>
           </tbody>
