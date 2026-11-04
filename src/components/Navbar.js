@@ -115,7 +115,7 @@ export default function Navbar({ activePage, setActivePage, onGantiPeran }) {
           className="logo-icon-img"
         />
         <div className="logo-text">
-          <span className="logo-text-line1">Arsip Keuangan</span>
+          <span className="logo-text-line1">Digitalisasi Arsip Keuangan</span>
           <span className="logo-text-line2">Kementerian</span>
           <span className="logo-text-line2">Pekerjaan Umum</span>
         </div>
@@ -162,13 +162,6 @@ export default function Navbar({ activePage, setActivePage, onGantiPeran }) {
         >
           👤
         </span>
-
-        <span className="nav-icon" title="Cari">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="7" />
-            <line x1="16.5" y1="16.5" x2="22" y2="22" />
-          </svg>
-        </span>
       </div>
     </nav>
 
@@ -185,18 +178,13 @@ export default function Navbar({ activePage, setActivePage, onGantiPeran }) {
           className={`nlm-card${animKeluar ? " nlm-card-keluar" : ""}`}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header */}
+          {/* Header - hanya logo kemenpu.png */}
           <div className="nlm-header">
             <img
               src={`${process.env.PUBLIC_URL}/kemenpu.png`}
               alt="Logo Kementerian Pekerjaan Umum"
               className="nlm-logo"
             />
-            <div className="nlm-brand">
-              <span className="nlm-brand-name">Login Admin</span>
-              <span className="nlm-brand-sub">Digitalisasi Arsip Keuangan</span>
-              <span className="nlm-brand-sub2">Kementerian Pekerjaan Umum</span>
-            </div>
             {/* Tombol tutup */}
             <button
               type="button"
@@ -212,54 +200,24 @@ export default function Navbar({ activePage, setActivePage, onGantiPeran }) {
 
           <p className="nlm-welcome">Masukkan kredensial admin untuk melanjutkan</p>
 
-          {/* Kotak sandi sementara */}
-          <div className="nlm-hint">
-            <span className="nlm-hint-icon">🔑</span>
-            <div className="nlm-hint-body">
-              <div className="nlm-hint-header">
-                <span className="nlm-hint-title">Sandi Sementara</span>
-                <button
-                  type="button"
-                  className="nlm-hint-use-btn"
-                  onClick={() => {
-                    setUsername("admin");
-                    setPassword("admin123");
-                    setLoginError("");
-                  }}
-                  title="Klik untuk mengisi otomatis"
-                >
-                  ⚡ Gunakan Otomatis
-                </button>
-              </div>
-              <div className="nlm-hint-row">
-                <span className="nlm-hint-key">Username</span>
-                <code
-                  className="nlm-hint-val nlm-clickable"
-                  onClick={() => { setUsername("admin"); setLoginError(""); }}
-                  title="Klik untuk menyalin username"
-                >
-                  admin
-                </code>
-              </div>
-              <div className="nlm-hint-row">
-                <span className="nlm-hint-key">Kata Sandi</span>
-                <code
-                  className="nlm-hint-val nlm-clickable"
-                  onClick={() => { setPassword("admin123"); setLoginError(""); }}
-                  title="Klik untuk menyalin kata sandi"
-                >
-                  admin123
-                </code>
-              </div>
-            </div>
-          </div>
-
           {/* Form */}
           <form className="nlm-form" onSubmit={submitLogin} noValidate>
 
             {/* Username */}
             <div className="nlm-field">
-              <label htmlFor="nlm-username" className="nlm-label">Username</label>
+              <div className="nlm-label-row">
+                <label htmlFor="nlm-username" className="nlm-label">Username</label>
+                <span className="nlm-inline-hint">
+                  sementara:{" "}
+                  <code
+                    className="nlm-hint-tag"
+                    onClick={() => { setUsername("admin"); setLoginError(""); }}
+                    title="Klik untuk mengisi admin"
+                  >
+                    admin
+                  </code>
+                </span>
+              </div>
               <div className="nlm-input-wrap">
                 <span className="nlm-input-icon">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -285,7 +243,19 @@ export default function Navbar({ activePage, setActivePage, onGantiPeran }) {
 
             {/* Password */}
             <div className="nlm-field">
-              <label htmlFor="nlm-password" className="nlm-label">Kata Sandi</label>
+              <div className="nlm-label-row">
+                <label htmlFor="nlm-password" className="nlm-label">Kata Sandi</label>
+                <span className="nlm-inline-hint">
+                  sementara:{" "}
+                  <code
+                    className="nlm-hint-tag"
+                    onClick={() => { setPassword("admin123"); setLoginError(""); }}
+                    title="Klik untuk mengisi admin123"
+                  >
+                    admin123
+                  </code>
+                </span>
+              </div>
               <div className="nlm-input-wrap">
                 <span className="nlm-input-icon">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none"

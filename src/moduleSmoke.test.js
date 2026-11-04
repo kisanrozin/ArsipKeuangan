@@ -16,6 +16,7 @@ const daftarModul = [
   "./components/ProsesBisnis",
   "./components/TamuRingkasan",
   "./components/StatistikOperasional",
+  "./components/DiagramRealisasi",
   "./components/DriveSection",
   "./components/Navbar",
   "./components/Sidebar",

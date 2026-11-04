@@ -40,7 +40,7 @@ export default function Sidebar({ activePage, setActivePage, isOpen }) {
       <div className="sidebar-info">
         <div className="sidebar-info-title">📌 Info Proyek</div>
         <div className="sidebar-info-text">
-          Analisis sistem pengarsipan keuangan Dinas PU untuk perancangan SIPKA berbasis digital.
+          Analisis sistem pengarsipan keuangan Dinas PU untuk perancangan Digitalisasi Arsip Keuangan.
         </div>
       </div>
 

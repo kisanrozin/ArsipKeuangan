@@ -1525,7 +1525,7 @@ export default function ProsesBisnis() {
           style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 14, marginBottom: 18 }}
         >
           <div>
-            <div className="table-breadcrumb">🏛️ SIPKA-PU / HASIL VERIFIKASI DIGITALISASI</div>
+            <div className="table-breadcrumb">🏛️ DIGITALISASI ARSIP KEUANGAN / HASIL VERIFIKASI DIGITALISASI</div>
             <h1 className="table-page-title">Hasil Verifikasi Digitalisasi</h1>
             <div className="vt-active-sheet-label" style={{ marginTop: 6 }}>
               <span className="vt-sheet-dot" />

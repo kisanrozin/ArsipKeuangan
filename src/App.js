@@ -218,7 +218,7 @@ function IsiApp() {
         {renderPage()}
       </div>
       <footer className="footer">
-        <div>© {new Date().getFullYear()} <strong>DIARKES</strong> · Digitalisasi Arsip Keuangan Kementerian Pekerjaan Umum</div>
+        <div>© {new Date().getFullYear()} <strong>Digitalisasi Arsip Keuangan</strong> · Kementerian Pekerjaan Umum</div>
         <div>Pusat Pengembangan Kompetensi SDA, Cipta Karya dan Prasarana Strategis · Versi 1.0</div>
       </footer>
     </div>

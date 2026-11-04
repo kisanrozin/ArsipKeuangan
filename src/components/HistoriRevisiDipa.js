@@ -617,10 +617,6 @@ export default function HistoriRevisiDipa({ setActivePage, periode = null }) {
     }
   };
 
-  const hapusBaris = (row) => {
-    setBaris((lama) => lama.filter((r) => r.id !== row.id));
-  };
-
   return (
     <div className="site-content" style={{ paddingTop: 24, paddingBottom: 60 }}>
       <div className="hrd-page">
@@ -713,7 +709,6 @@ export default function HistoriRevisiDipa({ setActivePage, periode = null }) {
                   <th className="hrd-col-pagu">Pagu (Rp)</th>
                   <th className="hrd-col-ket">Keterangan</th>
                   <th className="hrd-col-bukti">Bukti</th>
-                  {isAdmin && <th className="hrd-col-aksi">Aksi</th>}
                 </tr>
               </thead>
               <tbody>
@@ -754,25 +749,11 @@ export default function HistoriRevisiDipa({ setActivePage, periode = null }) {
                           "—"
                         )}
                       </td>
-                      {isAdmin && (
-                        <td className="hrd-col-aksi">
-                          {item.lokal && (
-                            <button
-                              type="button"
-                              className="hrd-row-btn hrd-row-btn-danger"
-                              onClick={() => hapusBaris(item)}
-                              title="Hapus baris tambahan ini"
-                            >
-                              🗑
-                            </button>
-                          )}
-                        </td>
-                      )}
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={isAdmin ? 7 : 6} className="hrd-empty">
+                    <td colSpan={6} className="hrd-empty">
                       {loading
                         ? `Mengambil data History Revisi DIPA tahun ${tahun} dari Google Drive...`
                         : error

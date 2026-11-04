@@ -509,7 +509,7 @@ body {
 }
 
 .stat-kpi-title {
-  font-size: 11px;
+  font-size: 10px;
   color: #64748b;
   font-weight: 700;
   text-transform: uppercase;
@@ -691,6 +691,353 @@ body {
   font-weight: 800;
   color: #0f172a;
   border-top: 2px solid var(--border);
+}
+
+/* ══════════════════════════════════════════
+   DIAGRAM REALISASI (lingkaran / donat)
+   ══════════════════════════════════════════ */
+.diagram-realisasi {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 18px 20px 20px;
+  margin-bottom: 40px;
+}
+
+.diagram-realisasi-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.diagram-realisasi-head .stat-subheading { margin-bottom: 0; }
+
+.diagram-realisasi-periode {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
+.diagram-realisasi-body {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+
+.diagram-realisasi-chart {
+  flex: 0 0 auto;
+  width: 190px;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+/* Diagram lingkaran penuh (pie) */
+.diagram-pie-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Donat kecil di kartu "Persentase Bulan" */
+.diagram-donat-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Diagram bar mendatar di kartu "Persentase Bulan" */
+.diagram-baris-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.diagram-realisasi-legend {
+  flex: 1 1 260px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.diagram-realisasi-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.diagram-realisasi-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.diagram-realisasi-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  flex: 0 0 auto;
+}
+
+.diagram-realisasi-value {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  text-align: right;
+  word-break: break-word;
+}
+
+.diagram-realisasi-pct {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 66px;
+  text-align: right;
+}
+
+.diagram-realisasi-total {
+  border-top: 1px dashed var(--border);
+  padding-top: 12px;
+}
+
+.diagram-realisasi-total .diagram-realisasi-label { color: #334155; }
+
+.diagram-realisasi-catatan {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.diagram-realisasi-empty {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  flex-wrap: wrap;
+}
+
+.diagram-realisasi-empty-text {
+  flex: 1 1 240px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #94a3b8;
+}
+
+@media (max-width: 640px) {
+  .diagram-realisasi-body,
+  .diagram-realisasi-empty {
+    gap: 18px;
+  }
+
+  .diagram-realisasi-chart { width: 160px; }
+
+  .diagram-realisasi-value {
+    font-size: 13px;
+  }
+}
+
+/* ── Kartu "Persentase Bulan" (donat ringkas) ── */
+.diagram-kartu {
+  min-height: 118px;
+}
+
+.diagram-kartu-body {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 4px 0 8px;
+  flex-wrap: wrap;
+}
+
+.diagram-kartu-chart {
+  flex: 0 0 300px;
+  width: 300px;
+  max-width: 100%;
+}
+
+.diagram-kartu-legend {
+  flex: 1 1 110px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.diagram-kartu-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.diagram-kartu-legend li strong {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.diagram-kartu-kosong {
+  flex: 1 1 120px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.diagram-kartu .stat-kpi-note {
+  margin-top: auto;
+}
+
+/* ── Grafik batang kelengkapan arsip digital (SVG) ── */
+.diagram-kelengkapan-svg {
+  font-family: inherit;
+  overflow: visible;
+}
+
+/* Isi kanan kartu: persentase besar + rincian total */
+.diagram-kartu-isi {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-width: 130px;
+}
+
+.diagram-kartu-nilai-besar {
+  font-size: 24px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1;
+}
+
+.diagram-kartu-keterangan {
+  font-size: 10px;
+  color: #64748b;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.diagram-kartu-info {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.diagram-kartu-info-label {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.diagram-kartu-info-nilai {
+  color: #0f172a;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+/* ── Detail realisasi SPM dari arsip digital ── */
+.diagram-kartu-detail {
+  margin-top: 10px;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  width: 100%;
+}
+
+.diagram-kartu-detail-judul {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.diagram-kartu-baris {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diagram-kartu-baris-track {
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.diagram-kartu-baris-segmen {
+  height: 100%;
+}
+
+.diagram-segmen-spm { background: #1a6d9a; }
+.diagram-segmen-impor { background: #0284c7; }
+
+.diagram-kartu-baris-isi {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.diagram-kartu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.diagram-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.diagram-dot-spm { background: #1a6d9a; }
+.diagram-dot-impor { background: #0284c7; }
+
+.diagram-kartu-item strong {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+}
+
+.diagram-kartu-jmlspm {
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 4px;
+  font-weight: 600;
 }
 
 /* ══════════════════════════════════════════
@@ -5007,11 +5354,6 @@ textarea.form-ctrl { resize: vertical; min-height: 90px; }
   min-width: 220px;
 }
 
-.hrd-col-aksi {
-  width: 84px;
-  text-align: center;
-}
-
 /* ── Aksi pada header & baris tabel ── */
 .hrd-head-actions {
   display: flex;
@@ -5073,11 +5415,6 @@ textarea.form-ctrl { resize: vertical; min-height: 90px; }
 .hrd-row-btn:hover {
   background: #eef2ff;
   border-color: #a5b4fc;
-}
-
-.hrd-row-btn-danger:hover {
-  background: #fef2f2;
-  border-color: #fca5a5;
 }
 
 .hrd-empty {
@@ -5499,6 +5836,14 @@ textarea.form-ctrl { resize: vertical; min-height: 90px; }
   animation: splashFadeUp 0.8s ease-out both;
 }
 
+.splash-logo {
+  width: 300px;
+  height: 300px;
+  margin: 0 0 20px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.45));
+}
+
 @keyframes splashFadeUp {
   from { opacity: 0; transform: translateY(18px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -5625,8 +5970,8 @@ textarea.form-ctrl { resize: vertical; min-height: 90px; }
   min-height: 100vh;
 }
 .login-logo-only .login-logo {
-  width: 160px;
-  height: 160px;
+  width: 380px;
+  height: 380px;
 }
 
 /* ── Header: logo + brand ── */
@@ -5951,16 +6296,17 @@ textarea.form-ctrl { resize: vertical; min-height: 90px; }
 .nlm-header {
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: center;
   position: relative;
+  padding: 4px 0 2px;
 }
 
 .nlm-logo {
-  width: 64px;
-  height: 64px;
+  height: 56px;
+  width: auto;
+  max-width: 250px;
   object-fit: contain;
-  flex-shrink: 0;
-  filter: drop-shadow(0 2px 5px rgba(0,0,0,0.12));
+  filter: drop-shadow(0 2px 5px rgba(0,0,0,0.1));
 }
 
 .nlm-brand {
@@ -6126,100 +6472,40 @@ textarea.form-ctrl { resize: vertical; min-height: 90px; }
   80%     { transform: translateX(4px); }
 }
 
-/* Kotak sandi sementara */
-.nlm-hint {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  background: #fffbeb;
-  border: 1.5px solid #fde68a;
-  border-radius: 10px;
-  padding: 11px 14px;
-  margin-bottom: 4px;
-}
-
-.nlm-hint-icon {
-  font-size: 18px;
-  line-height: 1;
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.nlm-hint-body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1;
-}
-
-.nlm-hint-header {
+/* Sandi sementara di sebelah label */
+.nlm-label-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
 }
 
-.nlm-hint-title {
+.nlm-inline-hint {
   font-size: 11.5px;
-  font-weight: 700;
-  color: #92400e;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-
-.nlm-hint-use-btn {
-  font-size: 11px;
-  font-weight: 700;
-  font-family: inherit;
-  color: #92400e;
-  background: #fde68a;
-  border: 1px solid #f59e0b;
-  border-radius: 6px;
-  padding: 2px 7px;
-  cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
-}
-
-.nlm-hint-use-btn:hover {
-  background: #fbbf24;
-  color: #78350f;
-  transform: translateY(-0.5px);
-}
-
-.nlm-hint-row {
+  color: #888;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
-.nlm-hint-key {
-  font-size: 12px;
-  color: #78350f;
-  width: 76px;
-  flex-shrink: 0;
-}
-
-.nlm-hint-val {
+.nlm-hint-tag {
   font-family: "Courier New", Courier, monospace;
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 700;
   color: #1B2A6B;
-  background: #fff;
+  background: #fffbeb;
   border: 1px solid #fcd34d;
   border-radius: 5px;
-  padding: 1px 8px;
-  letter-spacing: 0.3px;
-}
-
-.nlm-clickable {
+  padding: 1px 7px;
   cursor: pointer;
+  letter-spacing: 0.2px;
   transition: all 0.15s ease;
 }
 
-.nlm-clickable:hover {
+.nlm-hint-tag:hover {
   background: #fef08a;
   border-color: #f59e0b;
-  transform: scale(1.03);
+  transform: translateY(-0.5px);
+  box-shadow: 0 1.5px 4px rgba(245, 158, 11, 0.22);
 }
 
 /* ── Tombol aksi ── */
@@ -6309,5 +6595,84 @@ textarea.form-ctrl { resize: vertical; min-height: 90px; }
 
 @media (prefers-reduced-motion: reduce) {
   .nlm-overlay, .nlm-card { animation: none; }
+}
+
+/* ── Tabel Total Digitalisasi Arsip Keuangan ── */
+.tabeltotal {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.tabeltotal td {
+  padding: 12px 18px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  vertical-align: middle;
+}
+
+.tabeltotal tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.tabeltotal-total {
+  font-weight: 800;
+  color: #0f172a;
+  background: #f8fafc;
+  border-top: 2px solid var(--border);
+}
+
+.tabeltotal-jumlah {
+  float: right;
+  font-size: 13px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.tabeltotal-bar {
+  position: relative;
+  height: 24px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+}
+
+.tabeltotal-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.tabeltotal-fill-tersimpan {
+  background: #0284c7;
+}
+
+.tabeltotal-fill-belum {
+  background: #d97706;
+}
+
+.tabeltotal-pct {
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.tabeltotal-bawah {
+  margin-top: 8px;
+  padding: 10px 18px;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-weight: 800;
+  color: #0f172a;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.tabeltotal-bawah .tabeltotal-pct {
+  font-size: 14px;
+  color: #0284c7;
 }
 

@@ -11,8 +11,8 @@ import StatistikOperasional from "./StatistikOperasional";
      1. Blok "Ringkasan Statistik Operasional"
         (src/components/StatistikOperasional.js) — kartu pagu /
         realisasi / persentase, bagian "Realisasi Data Per Bulan"
-        beserta filter tahun-bulan, dan tabel
-        "Pagu & Realisasi <Bulan> <Tahun>". Angka & tabel ini
+        beserta filter tahun-bulan, dan diagram lingkaran
+        "Realisasi vs Sisa Pagu". Angka & diagram ini
         identik dengan yang dilihat admin karena keduanya memakai
         sumber data yang sama (Google Sheets + Google Drive).
         Perbedaannya hanya `readOnly` — tanpa tombol sinkron dan

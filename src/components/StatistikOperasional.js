@@ -1,11 +1,8 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from "react";
 import {
-  RESUME_VERIFIKASI_JAN_JUNI,
-  PAGU_ANGGARAN,
   TAHUN_ANGGARAN,
   TAHUN_ANGGARAN_AKTIF,
   BULAN_ANGGARAN_OPTIONS,
-  SP2D_SHEET_TAB,
 } from "../data/masterData";
 import {
   API_KEY,
@@ -26,6 +23,9 @@ import {
   revisiDipaBulan,
 } from "../data/rekapDipa";
 import { ambilRingkasanLive, dengarRingkasanLive } from "../data/sp2dLive";
+import DiagramRealisasi, {
+  KartuSisaAnggaranDipa,
+} from "./DiagramRealisasi";
 import {
   dengarKegiatanTambahan,
   rekapRealisasiTambahan,
@@ -197,8 +197,6 @@ export default function StatistikOperasional({
       updatedAt: null,
     },
   });
-  const [isRefreshing, setIsRefreshing] = useState(false);
-
   // Rekap kegiatan live (cadangan angka kartu "Realisasi Bulan") dan
   // revisi DIPA live (sumber pagu DIPA per bulan).
   const [rekapKegiatan, setRekapKegiatan] = useState(null);
@@ -297,7 +295,6 @@ export default function StatistikOperasional({
   }, [bulan, tahun]);
 
   const sp2dLive = live.sp2d;
-  const stats = live.induk;
 
   /* Data live: segarkan saat halaman dibuka, tiap `pollMs`, saat tab
      difokuskan kembali, dan saat ada berkas yang berubah di aplikasi.
@@ -311,12 +308,6 @@ export default function StatistikOperasional({
     ambilRekapSpm(API_KEY, paksa).catch((e) =>
       console.warn("Realisasi SPM gagal dimuat:", e)
     );
-  };
-
-  const sinkronkan = () => {
-    setIsRefreshing(true);
-    segarkan(true);
-    setTimeout(() => setIsRefreshing(false), 500);
   };
 
   useEffect(() => {
@@ -359,19 +350,6 @@ export default function StatistikOperasional({
 
   /* Kartu "Total" selalu untuk TA aktif (catatannya "DIPA / RKKS
      2026"), jadi tidak ikut berubah saat filter tahun diganti. */
-  const sp2dTahunAktif = useMemo(
-    () => susunPerBulan(TAHUN_ANGGARAN_AKTIF, sp2dLive),
-    [sp2dLive]
-  );
-
-  const adaDataLive = Boolean(sp2dLive.nominal);
-  const paguTotal = adaDataLive
-    ? sp2dTahunAktif.reduce((a, r) => a + r.pagu, 0)
-    : Number(PAGU_ANGGARAN.total) || 0;
-  const realisasiTotal = adaDataLive
-    ? sp2dTahunAktif.reduce((a, r) => a + r.realisasi, 0)
-    : Number(RESUME_VERIFIKASI_JAN_JUNI.total.realisasiNominal) || 0;
-  const persenTotal = hitungPersen(realisasiTotal, paguTotal);
 
   // Revisi DIPA live → pagu per bulan. Nominal yang belum ada di
   // masterData dibaca otomatis dari berkas PDF DIPA di Drive (lihat
@@ -579,46 +557,26 @@ export default function StatistikOperasional({
     [hitungDataBulan, bulan]
   );
 
-  /* Bulan dari revisi DIPA TERAKHIR yang nominal pagunya sudah
-     ter-update di Drive (contoh: DIPA Revisi 10 ditetapkan 31 Juli
-     2026 → bulan Juli). Dipakai tabel "Pagu & Realisasi": yang
-     ditampilkan hanya bulan pagu revisi terakhir beserta realisasi
-     bulan tersebut, supaya langsung terlihat data sudah berganti
-     sampai revisi/bulan mana. */
-  const bulanRevisiTerbaru = useMemo(() => {
-    if (!tahunAktifDipilih) return bulan;
-    const baris = (rekapDipa.rows || []).filter(
-      (r) =>
-        Number(r.nomor) > 0 &&
-        Number(r.pagu) > 0 &&
-        !Number.isNaN(Number(r.waktu))
-    );
-    if (baris.length === 0) return bulan;
-    /* Revisi dengan tanggal penetapan paling baru. */
-    const terbaru = baris.reduce((a, b) =>
-      Number(b.waktu) > Number(a.waktu) ? b : a
-    );
-    const tanggalRevisi = new Date(Number(terbaru.waktu));
-    /* Revisi 1 kadang ditetapkan Desember tahun sebelumnya — pagunya
-       berlaku mulai Januari tahun anggaran berjalan. */
-    const idx =
-      tanggalRevisi.getFullYear() < tahunNum ? 0 : tanggalRevisi.getMonth();
-    return (BULAN_OPTIONS[idx] || {}).id || bulan;
-  }, [tahunAktifDipilih, tahunNum, rekapDipa, bulan]);
-
-  /* Data yang ditampilkan tabel "Pagu & Realisasi": bulan pagu revisi
-     terakhir + realisasinya. Pagu revisi tetap ditampilkan walau
-     realisasi bulan itu belum ter-update. */
-  const dataTabel = useMemo(
-    () => hitungDataBulan(bulanRevisiTerbaru, { abaikanBatasUpdate: true }),
-    [hitungDataBulan, bulanRevisiTerbaru]
-  );
-
   const pesanTanpaData = `Data TA ${tahunNum} belum tersedia`;
 
   const bukaKegiatan = () => {
     if (setActivePage) setActivePage("data-kegiatan");
   };
+
+  // Hitung persentase untuk tabel Total Digitalisasi Arsip Keuangan
+  // Ambil total SPM dari tab rekap terbaru di rekapSpm.perBulan
+  const perBulan = rekapSpm ? (rekapSpm.perBulan || {}) : {};
+  const bulanTerurut = Object.keys(perBulan).sort(
+    (a, b) => NOMOR_BULAN[b] - NOMOR_BULAN[a]
+  );
+  const totalSpm =
+    rekapSpm && bulanTerurut.length
+      ? Number(perBulan[bulanTerurut[0]]?.total || 0)
+      : 0;
+  // Tersimpan = realisasi bulan yang difilter
+  const tersimpanSpm = Number(dataBulan.realisasi || 0);
+  const tersimpanPct = totalSpm > 0 ? Math.round((tersimpanSpm / totalSpm) * 100) : 0;
+  const belumTersimpanPct = totalSpm > 0 ? 100 - tersimpanPct : 0;
 
   return (
     <div>
@@ -771,21 +729,11 @@ export default function StatistikOperasional({
           }
           onClick={readOnly ? undefined : bukaKegiatan}
         />
-        <StatCard
-          title="Persentase Bulan"
-          value={
-            dataBulan.persen === null ? "—" : `${dataBulan.persen.toFixed(2)}%`
-          }
-          color="#10b981"
-          // Tanpa data, progress bar disembunyikan supaya tidak
-          // memberi kesan realisasi sudah dihitung.
-          progress={dataBulan.persen === null ? undefined : dataBulan.persen}
-          note={
-            dataBulan.persen !== null
-              ? "Realisasi ÷ Pagu Bulan"
-              : /* Persentase kosong karena reasons yang berbeda —
-                   bikin pesannya tepat supaya tidak menyesatkan. */
-                dataBulan.tanpaDataTahun
+        <KartuSisaAnggaranDipa
+          pagu={dataBulan.paguDipakai}
+          realisasi={dataBulan.realisasi}
+          catatan={
+            dataBulan.tanpaDataTahun
               ? pesanTanpaData
               : dataBulan.memuatDipa
               ? "Memuat pagu dari Google Drive…"
@@ -800,93 +748,56 @@ export default function StatistikOperasional({
         />
       </div>
 
-      {/* ── Tabel Pagu & Realisasi — hanya bulan terakhir yang sudah
-             ter-update, supaya terlihat data berganti sampai bulan mana ── */}
-      <div className="stat-table-wrap" style={{ marginBottom: 34 }}>
+      {/* ── Diagram Realisasi vs Sisa Pagu (lingkaran) ── */}
+      <DiagramRealisasi
+        periode={`${dataBulan.label} ${dataBulan.tahunLabel}`}
+        realisasi={dataBulan.realisasi}
+        pagu={dataBulan.paguDipakai}
+      />
+
+      {/* ── Tabel Total Digitalisasi Arsip Keuangan ── */}
+      <div className="stat-table-wrap" style={{ marginTop: 32 }}>
         <div className="stat-table-caption">
-          Pagu &amp; Realisasi {dataTabel.label} {dataTabel.tahunLabel}
-          {dataTabel.revisi
-            ? ` — DIPA berlaku: ${dataTabel.revisi.dipa} (${dataTabel.revisi.tanggal})`
-            : ""}
-          {(dataTabel.adaPagu || dataTabel.adaDataBulan) && (
-            <span style={{ fontWeight: 400, color: "#64748b" }}>
-              {" "}— pagu revisi ter-update terakhir
-            </span>
-          )}
-          {dataTabel.bulanBelumTerupdate && (
-            <span style={{ fontWeight: 400, color: "#64748b" }}>
-              {" "}— data ter-update s.d. {dataTabel.bulanTerakhirTerupdate}{" "}
-              {dataTabel.tahunLabel}
-            </span>
-          )}
-          {dataTabel.tanpaDataTahun && (
-            <span style={{ fontWeight: 400, color: "#64748b" }}>
-              {" "}— data TA {dataTabel.tahunLabel} belum tersedia
-            </span>
-          )}
+          TOTAL DIGITALISASI ARSIP KEUANGAN{" "}
+          <span className="tabeltotal-jumlah">
+            {totalSpm} SPM
+          </span>
         </div>
-        <table className="stat-table">
-          <thead>
-            <tr>
-              <th style={{ textAlign: "left" }}>Bulan</th>
-              <th style={{ textAlign: "right" }}>Pagu DIPA Revisi (Rp)</th>
-              <th style={{ textAlign: "right" }}>Realisasi (Rp)</th>
-            </tr>
-          </thead>
+        <table className="stat-table tabeltotal">
           <tbody>
             <tr>
+              <td style={{ width: "40%" }}>ARSIP TERSIMPAN</td>
               <td>
-                <span className="stat-table-dot" style={{ background: "#d97706" }} />
-                {dataTabel.label}
+                <div className="tabeltotal-bar">
+                  <div
+                    className="tabeltotal-fill tabeltotal-fill-tersimpan"
+                    style={{ width: `${tersimpanPct}%` }}
+                  />
+                </div>
+                <span className="tabeltotal-pct">
+                  {tersimpanSpm} SPM ({tersimpanPct} %)
+                </span>
               </td>
-              <td className="num">
-                {dataTabel.revisi ? (
-                  <>
-                    {formatRupiah(dataTabel.revisi.nominal)}
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "#64748b",
-                        fontWeight: 400,
-                      }}
-                    >
-                      {dataTabel.revisi.dipa} · {dataTabel.revisi.tanggal}
-                    </div>
-                  </>
-                ) : (
-                  <span
-                    className="dk-kosong"
-                    title={
-                      dataTabel.bulanBatasDipa
-                        ? `Belum ada revisi DIPA dengan nominal pagu yang berlaku pada ${dataTabel.label}. Pagu terisi sampai ${dataTabel.bulanBatasDipa}.`
-                        : `Belum ada revisi DIPA yang berlaku pada ${dataTabel.label}.`
-                    }
-                  >
-                    —
-                  </span>
-                )}
-              </td>
-              <td className="num">
-                {dataTabel.adaDataBulan ? (
-                  formatRupiah(dataTabel.realisasi)
-                ) : (
-                  <span
-                    className="dk-kosong"
-                    title={
-                      dataTabel.tanpaDataTahun
-                        ? pesanTanpaData
-                        : dataTabel.bulanBatasRekap
-                        ? `Rekap resmi di Drive baru lengkap sampai ${dataTabel.bulanBatasRekap}`
-                        : "Belum ada data realisasi bulan ini"
-                    }
-                  >
-                    —
-                  </span>
-                )}
+            </tr>
+            <tr>
+              <td>ARSIP BELUM TERSIMPAN</td>
+              <td>
+                <div className="tabeltotal-bar">
+                  <div
+                    className="tabeltotal-fill tabeltotal-fill-belum"
+                    style={{ width: `${belumTersimpanPct}%` }}
+                  />
+                </div>
+                <span className="tabeltotal-pct">
+                  {totalSpm - tersimpanSpm} SPM ({belumTersimpanPct} %)
+                </span>
               </td>
             </tr>
           </tbody>
         </table>
+        <div className="tabeltotal-bawah">
+          TOTAL <span className="tabeltotal-pct">{totalSpm} SPM</span>
+        </div>
       </div>
     </div>
   );

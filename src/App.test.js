@@ -14,8 +14,10 @@ test('layar sambutan tampil dulu, lalu tombol masuk membuka aplikasi', async () 
     screen.getByRole('button', { name: /Masuk ke Dashboard/i })
   );
 
-  // 3. Aplikasi terbuka (mode tamu, menampilkan ringkasan DIARKES).
+  // 3. Aplikasi terbuka (mode tamu, menampilkan ringkasan Digitalisasi Arsip Keuangan).
   await waitFor(() => {
-    expect(screen.getAllByText(/DIARKES/i).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(/Digitalisasi Arsip Keuangan/i).length
+    ).toBeGreaterThan(0);
   });
 });

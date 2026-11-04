@@ -26,8 +26,8 @@ export default function LoginScreen({ onLogin }) {
       <div className="login-bg" />
       <div className="login-logo-only">
         <img
-          src={`${process.env.PUBLIC_URL}/kemenpu.png`}
-          alt="Logo Kementerian Pekerjaan Umum"
+          src={`${process.env.PUBLIC_URL}/logokeuanganpu.png`}
+          alt="Logo Keuangan Pekerjaan Umum"
           className="login-logo"
         />
       </div>
