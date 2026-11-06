@@ -236,9 +236,10 @@ export async function bacaRekapKumulatif(sheetId, tab) {
       perRekening.set(kode, { kode, realisasi, spm, pic, status });
       jumlahSpm += Number(spm) || 0;
     } else if (realisasi > sedia.realisasi) {
-      // Rekening dobel di tab → ambil nilai terbesar.
+      // Rekening dobel di tab → ambil nilai terbesar. SPM hanya dihitung
+      // sekali (pada kemunculan pertama) supaya duplikasi tidak dijumlah
+      // dobel — "duplikasi dianggap satu saja".
       sedia.realisasi = realisasi;
-      jumlahSpm += Number(spm) || 0;
     }
   });
 

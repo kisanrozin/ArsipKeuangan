@@ -35,6 +35,47 @@ Kode peran: `src/context/PeranContext.js`. Halaman yang hanya boleh dibuka admin
 (dashboard, history revisi DIPA) otomatis dialihkan kembali ke halaman tamu bila
 peran diturunkan.
 
+## Keamanan &amp; Cadangan Data
+
+Data input admin (terutama tombol `+ Tambah Data`) disimpan di `localStorage`
+browser. Agar tidak mudah hilang:
+
+- **Cadangan otomatis** dibuat sebelum data diubah dan sekali sehari saat
+  aplikasi dibuka (`src/data/backupData.js`). Riwayat disimpan di browser.
+- **Salinan data terakhir** disimpan terpisah; bila data utama rusak/terpotong,
+  aplikasi memulihkannya otomatis (`src/data/KegiatanTambahan.js`).
+- **Penulisan daftar kosong ditolak** kecuali admin memang mengonfirmasi
+  penghapusan, sehingga bug tidak bisa mengosongkan semua data.
+- Hapus data sekarang memakai **konfirmasi** dan menyebutkan lokasi cadangan.
+- Tombol **🛡 Cadangan Data** (mode admin, halaman Data Kegiatan) menyediakan:
+  buat cadangan, **unduh berkas `.json`**, pulihkan dari berkas, dan pulihkan
+  dari riwayat.
+
+> Cadangan di riwayat tetap berada di browser yang sama. **Unduh berkas `.json`
+> secara berkala** dan simpan di komputer/Google Drive lain. Untuk data yang
+> harus dipakai bersama lintas perangkat, gunakan sumber Google Sheets/Drive
+> atau backend database, bukan `localStorage`.
+
+### Login admin
+
+Login memakai `api/login.php` (MySQL). Pengamanan yang sudah ada:
+
+- prepared statement (anti SQL injection) dan rate limit percobaan login;
+- password bcrypt — password teks biasa otomatis dimigrasikan saat login;
+- akun dengan role selain `admin` ditolak;
+- CORS dibatasi lewat environment `APP_ORIGIN` di server PHP;
+- pesan error tidak membocorkan detail database.
+
+Wajib dilakukan saat deploy:
+
+1. Ganti kata sandi default `admin123` (lihat `api/database.sql`).
+2. Set `APP_ORIGIN` di server PHP ke origin frontend, mis.
+   `APP_ORIGIN=https://arsip.contoh.go.id`.
+3. Jangan commit `.env` / kredensial (sudah masuk `.gitignore`; contoh ada di
+   `.env.example`).
+4. Pastikan HTTPS aktif. Header keamanan untuk Vercel sudah diatur di
+   `vercel.json`.
+
 ## Available Scripts
 
 In the project directory, you can run:

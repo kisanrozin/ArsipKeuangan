@@ -74,6 +74,15 @@ function hitungPersen(realisasi, pagu) {
   return (r / p) * 100;
 }
 
+/* Tanggal revisi DIPA berbentuk "10 September 2026".
+   Tampilkan seluruh tanggal di dalam tanda kurung,
+   mis. "(10 September 2026)". */
+function formatTanggalDipa(tanggal) {
+  const m = String(tanggal || "").match(/^(\d{1,2})\s+(.+?)\s+(\d{4})$/);
+  if (!m) return tanggal || "";
+  return `(${m[1]} ${m[2]} ${m[3]})`;
+}
+
 /* Pagu & realisasi per bulan untuk satu tahun.
    SEMUA angka diambil dari data live (spreadsheet / Google Drive):
      · pagu      → tab SP2D di spreadsheet, lalu Pagu DIPA Revisi
@@ -563,18 +572,22 @@ export default function StatistikOperasional({
     if (setActivePage) setActivePage("data-kegiatan");
   };
 
-  // Hitung persentase untuk tabel Total Digitalisasi Arsip Keuangan
-  // Ambil total SPM dari tab rekap terbaru di rekapSpm.perBulan
-  const perBulan = rekapSpm ? (rekapSpm.perBulan || {}) : {};
-  const bulanTerurut = Object.keys(perBulan).sort(
+  // Hitung persentase untuk tabel Total Digitalisasi Arsip Keuangan.
+  // Total SPM diambil dari DATA KEGIATAN (rekap kumulatif spreadsheet),
+  // bukan dari nominal realisasi (Rp). Setiap kode rekening dihitung satu
+  // saja, sehingga duplikasi baris tidak membuat SPM terhitung dobel
+  // (lihat bacaRekapKumulatif di src/data/rekapKegiatan.js).
+  // Ambil jumlah SPM kumulatif dari bulan terakhir yang punya data.
+  const kumulatif = rekapKegiatan?.kumulatif || {};
+  const bulanKumulatif = Object.keys(kumulatif).sort(
     (a, b) => NOMOR_BULAN[b] - NOMOR_BULAN[a]
   );
-  const totalSpm =
-    rekapSpm && bulanTerurut.length
-      ? Number(perBulan[bulanTerurut[0]]?.total || 0)
-      : 0;
-  // Tersimpan = realisasi bulan yang difilter
-  const tersimpanSpm = Number(dataBulan.realisasi || 0);
+  const totalSpm = bulanKumulatif.length
+    ? Math.max(...bulanKumulatif.map((b) => Number(kumulatif[b].jumlahSpm || 0)))
+    : 0;
+  // Tersimpan = jumlah SPM tercatat pada bulan yang difilter (data kegiatan),
+  // dibatasi agar tidak melebihi total.
+  const tersimpanSpm = Math.min(totalSpm, Number(dataBulan.jumlahSpm || 0));
   const tersimpanPct = totalSpm > 0 ? Math.round((tersimpanSpm / totalSpm) * 100) : 0;
   const belumTersimpanPct = totalSpm > 0 ? 100 - tersimpanPct : 0;
 
@@ -644,7 +657,7 @@ export default function StatistikOperasional({
       <div className="stat-row stat-row-3" style={{ marginBottom: 40 }}>
         {/* Kartu "Pagu Bulan (Rp.)": keterangan revisi DIPA yang berlaku
             pada bulan ini tampil tepat di bawah nominal pagu, mis.
-            "DIPA Revisi 10 · 31 Juli 2026". */}
+            "DIPA Revisi 10 · (31 Juli 2026)". */}
         <StatCard
           title="Pagu Bulan (Rp.)"
           value={
@@ -652,7 +665,9 @@ export default function StatistikOperasional({
           }
           after={
             dataBulan.revisi
-              ? `${dataBulan.revisi.dipa} · ${dataBulan.revisi.tanggal}`
+              ? `${dataBulan.revisi.dipa} · ${formatTanggalDipa(
+                  dataBulan.revisi.tanggal
+                )}`
               : undefined
           }
           color="#d97706"
@@ -743,12 +758,12 @@ export default function StatistikOperasional({
               ? dataBulan.bulanBelumTerupdate
                 ? "Bulan ini belum ter-update di spreadsheet"
                 : "Pagu bulan ini belum tersedia"
-              : "Realisasi ÷ Pagu Bulan"
+              : undefined
           }
         />
       </div>
 
-      {/* ── Diagram Realisasi vs Sisa Pagu (lingkaran) ── */}
+      {/* ── Diagram Persentase Realisasi dan Pagu (lingkaran) ── */}
       <DiagramRealisasi
         periode={`${dataBulan.label} ${dataBulan.tahunLabel}`}
         realisasi={dataBulan.realisasi}

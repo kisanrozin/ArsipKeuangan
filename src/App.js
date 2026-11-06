@@ -10,6 +10,7 @@ import TamuRingkasan from "./components/TamuRingkasan";
 import SplashScreen from "./components/SplashScreen";
 import { PeranProvider, usePeran } from "./context/PeranContext";
 import { praMuatKegiatan } from "./data/cacheKegiatan";
+import { pastikanCadanganHarian } from "./data/backupData";
 
 /* Scroll tanpa animasi.
    `App.css` memakai `html { scroll-behavior: smooth }`, sehingga
@@ -43,6 +44,17 @@ function IsiApp() {
     const t = setTimeout(() => {
       praMuatKegiatan();
     }, 400);
+    return () => clearTimeout(t);
+  }, [splashTutup]);
+
+  /* Cadangan harian: satu titik cadangan per hari saat aplikasi
+     dibuka, sebagai jaring pengaman tambahan selain cadangan yang
+     dibuat sebelum setiap perubahan data. */
+  React.useEffect(() => {
+    if (!splashTutup) return undefined;
+    const t = setTimeout(() => {
+      pastikanCadanganHarian();
+    }, 1200);
     return () => clearTimeout(t);
   }, [splashTutup]);
 

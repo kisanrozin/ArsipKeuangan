@@ -12,7 +12,7 @@ import StatistikOperasional from "./StatistikOperasional";
         (src/components/StatistikOperasional.js) — kartu pagu /
         realisasi / persentase, bagian "Realisasi Data Per Bulan"
         beserta filter tahun-bulan, dan diagram lingkaran
-        "Realisasi vs Sisa Pagu". Angka & diagram ini
+        "Persentase Realisasi dan Pagu". Angka & diagram ini
         identik dengan yang dilihat admin karena keduanya memakai
         sumber data yang sama (Google Sheets + Google Drive).
         Perbedaannya hanya `readOnly` — tanpa tombol sinkron dan

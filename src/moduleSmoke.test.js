@@ -19,6 +19,7 @@ const daftarModul = [
   "./components/DiagramRealisasi",
   "./components/DriveSection",
   "./components/Navbar",
+  "./components/CadanganData",
   "./components/Sidebar",
   "./components/SplashScreen",
   "./context/PeranContext",
@@ -30,6 +31,7 @@ const daftarModul = [
   "./data/sp2dLive",
   "./data/paguPdf",
   "./data/kegiatanTambahan",
+  "./data/backupData",
   "./data/cacheKegiatan",
 ];
 

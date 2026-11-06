@@ -10,8 +10,8 @@ import React from "react";
         public/diagramlingkaran.jpeg: lingkaran penuh berwarna biru
         dengan garis pemisah putih antar irisan.
 
-          • irisan gelap → realisasi
-          • irisan terang → sisa pagu (pagu − realisasi)
+          • irisan gelap → persentase realisasi (dari pagu)
+          • irisan terang → persentase sisa pagu (dari pagu)
 
      2. KartuPersentaseRealisasi — versi ringkas berupa donat yang
         menggantikan kartu "Persentase Bulan": persentase realisasi
@@ -59,7 +59,7 @@ function hitungIrisan(realisasi, pagu) {
     if (realisasiNum > 0) {
       irisan.push({
         key: "realisasi",
-        label: "Realisasi",
+        label: "Persentase Realisasi",
         value: Math.min(realisasiNum, paguNum),
         color: WARNA_REALISASI,
       });
@@ -67,7 +67,7 @@ function hitungIrisan(realisasi, pagu) {
     if (sisa > 0) {
       irisan.push({
         key: "sisa",
-        label: "Sisa Pagu",
+        label: "Persentase Sisa Pagu",
         value: sisa,
         color: WARNA_SISA,
       });
@@ -399,9 +399,6 @@ export function KartuSisaAnggaranDipa({
           <div className="diagram-kartu-nilai-besar">
             {adaPagu ? formatSisa(sisaNum) : "—"}
           </div>
-          <div className="diagram-kartu-keterangan">
-            sisa anggaran dari DIPA
-          </div>
         </div>
       </div>
 
@@ -575,7 +572,7 @@ export default function DiagramRealisasi({
   return (
     <section className="diagram-realisasi" aria-label="Diagram realisasi">
       <div className="diagram-realisasi-head">
-        <h3 className="stat-subheading">Realisasi vs Sisa Pagu</h3>
+        <h3 className="stat-subheading">Persentase Realisasi dan Pagu</h3>
         {periode && (
           <span className="diagram-realisasi-periode">{periode}</span>
         )}
@@ -629,22 +626,12 @@ export default function DiagramRealisasi({
                     style={{ backgroundColor: s.color }}
                   ></span>
                   <span className="diagram-realisasi-label">{s.label}</span>
-                  <span className="diagram-realisasi-value">
-                    {formatRupiah(s.value)}
-                  </span>
                   <span className="diagram-realisasi-pct">
                     {formatPersen(pct)}
                   </span>
                 </li>
               );
             })}
-            <li className="diagram-realisasi-item diagram-realisasi-total">
-              <span className="diagram-realisasi-label">Total Pagu</span>
-              <span className="diagram-realisasi-value">
-                {formatRupiah(pagu)}
-              </span>
-              <span className="diagram-realisasi-pct">100,00%</span>
-            </li>
             {lebihPagu && (
               <li className="diagram-realisasi-catatan">
                 Realisasi melebihi pagu sebesar{" "}

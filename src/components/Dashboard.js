@@ -9,7 +9,7 @@ import StatistikOperasional from "./StatistikOperasional";
 
      • kartu Total Pagu / Total Realisasi SPM / Persentase Realisasi
      • "Realisasi Data Per Bulan" (filter tahun-bulan + 3 kartu bulan)
-     • diagram lingkaran "Realisasi vs Sisa Pagu"
+     • diagram lingkaran "Persentase Realisasi dan Pagu"
 
    Hero banner & penjelasan "Digitalisasi Arsip Keuangan" dipindah
    ke halaman tamu (TamuRingkasan.js).

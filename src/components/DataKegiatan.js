@@ -26,6 +26,7 @@ import {
   muatDataKegiatanDariDrive,
 } from "../data/cacheKegiatan";
 import { usePeran } from "../context/PeranContext";
+import CadanganData from "./CadanganData";
 import { parseNamaFolder } from "../data/namaFolderKegiatan";
 import {
   ambilEntriDrop,
@@ -515,6 +516,133 @@ async function bacaPesanDrive(res) {
   } catch (e) {
     return `HTTP ${res.status}`;
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DRIVE: baca & tulis data kegiatan tambahan sebagai JSON file
+   File disimpan di folder SPJ (SPJ_FOLDER_ID) supaya data metadata
+   kegiatan yang diinput admin tersimpan di Drive, tidak hanya di
+   localStorage browser. Data tetap aman di localStorage bila Drive
+   gagal (tidak ada penolakan penyimpanan lokal).
+   ═══════════════════════════════════════════════════════════════ */
+const NAMA_BERKAS_DATA_TAMBAHAN = "data-kegiatan-tambahan.json";
+
+/* Cari berkas dengan nama tertentu di satu folder Drive. */
+async function cariBerkasDiDrive(token, folderId, namaBerkas) {
+  const q = `'${folderId}' in parents and name = '${namaBerkas}' and trashed=false`;
+  const params = new URLSearchParams({
+    q,
+    fields: "files(id,name,mimeType,size,webViewLink)",
+    key: API_KEY,
+  });
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+  if (!res.ok) {
+    const pesan = await bacaPesanDrive(res);
+    throw new Error(`Gagal mencari berkas di Drive — ${pesan}`);
+  }
+  const data = await res.json();
+  return (data.files || [])[0] || null;
+}
+
+/* Unduh isi berkas Drive sebagai teks. */
+async function bacaFileDariDrive(token, fileId) {
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${API_KEY}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) {
+    const pesan = await bacaPesanDrive(res);
+    throw new Error(`Gagal membaca berkas dari Drive — ${pesan}`);
+  }
+  return res.text();
+}
+
+/* Buat atau timpa berkas JSON di Drive. */
+async function simpanFileJsonKeDrive(token, folderId, namaBerkas, kontenObj) {
+  const konten = JSON.stringify(kontenObj, null, 2);
+  const existing = await cariBerkasDiDrive(token, folderId, namaBerkas);
+
+  const boundary = `puarsip${Date.now()}`;
+  const meta = {
+    name: namaBerkas,
+    parents: [folderId],
+    mimeType: "application/json",
+  };
+
+  const body = new Blob(
+    [
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
+      JSON.stringify(meta),
+      `\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
+      konten,
+      `\r\n--${boundary}--`,
+    ],
+    { type: `multipart/related; boundary=${boundary}` }
+  );
+
+  let url, method;
+  if (existing) {
+    // Timpa berkas yang sudah ada.
+    url = `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,name,size,webViewLink&key=${API_KEY}`;
+    method = "PATCH";
+  } else {
+    url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,webViewLink&key=${API_KEY}`;
+    method = "POST";
+  }
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": `multipart/related; boundary=${boundary}`,
+    },
+    body,
+  });
+  if (!res.ok) {
+    const pesan = await bacaPesanDrive(res);
+    throw new Error(`Gagal menyimpan berkas ke Drive — ${pesan}`);
+  }
+  return res.json();
+}
+
+/* Muat data kegiatan tambahan dari Drive (kembalikan null bila tidak ada / gagal). */
+export async function muatDataTambahanDariDrive() {
+  const token = bacaToken();
+  if (!token) return null;
+  try {
+    const file = await cariBerkasDiDrive(
+      token,
+      DRIVE_FOLDER_ID,
+      NAMA_BERKAS_DATA_TAMBAHAN
+    );
+    if (!file) return null;
+    const teks = await bacaFileDariDrive(token, file.id);
+    const data = JSON.parse(teks);
+    return Array.isArray(data) ? data : null;
+  } catch (e) {
+    console.warn("Gagal memuat data kegiatan tambahan dari Drive:", e);
+    return null;
+  }
+}
+
+/* Simpan data kegiatan tambahan ke Drive (dipanggil setelah localStorage tersimpan). */
+export function simpanDataTambahanKeDrive(daftar) {
+  const token = bacaToken();
+  if (!token) return Promise.resolve(null); // belum login — lewati Drive
+  return simpanFileJsonKeDrive(
+    token,
+    DRIVE_FOLDER_ID,
+    NAMA_BERKAS_DATA_TAMBAHAN,
+    daftar
+  ).catch((e) => {
+    console.warn("Gagal menyimpan data kegiatan tambahan ke Drive:", e);
+    return null;
+  });
 }
 
 /* ── Pekerjaan dengan batas konkurensi (jalankanKolom) sekarang
@@ -1040,6 +1168,27 @@ export default function DataKegiatan({ periode = null }) {
      (src/data/KegiatanTambahan.js) supaya halaman tamu ikut berubah
      begitu baris baru ditambah, termasuk dari tab lain. */
   useEffect(() => dengarKegiatanTambahan(setTambahan), []);
+
+  /* Saat halaman dibuka, coba juga ambil data dari Drive sebagai
+     sumber sinkronisasi. Data Drive hanya dipakai bila localStorage
+     belum ada data sama sekali, sehingga perubahan lokal tidak
+     tertimpa. */
+  useEffect(() => {
+    let abaikan = false;
+    (async () => {
+      const dariDrive = await muatDataTambahanDariDrive();
+      if (abaikan) return;
+      if (dariDrive && dariDrive.length > 0) {
+        const lokal = bacaKegiatanTambahan();
+        if (!lokal || lokal.length === 0) {
+          setTambahan(dariDrive);
+        }
+      }
+    })();
+    return () => {
+      abaikan = true;
+    };
+  }, []);
 
   const tampilkanToast = useCallback((pesan) => {
     setToast(pesan);
@@ -2151,8 +2300,15 @@ export default function DataKegiatan({ periode = null }) {
         kode,
         nama,
       });
+      if (!tulisKegiatanTambahan(next)) {
+        setPesanFileTambah(
+          "Data gagal disimpan — penyimpanan browser mungkin penuh. " +
+            "Unduh cadangan lewat tombol 🛡 Cadangan Data lalu coba lagi."
+        );
+        return;
+      }
       setTambahan(next);
-      tulisKegiatanTambahan(next);
+      await simpanDataTambahanKeDrive(next);
 
       const files = analisaTambah.files || [];
       if (files.length > 0) {
@@ -2209,13 +2365,16 @@ export default function DataKegiatan({ periode = null }) {
               lainnya: (t.lainnya || []).map(updateLain),
             };
           });
-          tulisKegiatanTambahan(nextLinks);
+          const linkTersimpan = tulisKegiatanTambahan(nextLinks);
+          await simpanDataTambahanKeDrive(nextLinks);
 
           setModalTambah(false);
           resetFormTambah();
           muatData(); // muat ulang tabel agar folder/berkas baru ikut terlihat
           tampilkanToast(
-            `✓ Impor kegiatan "${kode}" disimpan & ${files.length} berkas terunggah ke Drive.`
+            linkTersimpan
+              ? `✓ Impor kegiatan "${kode}" disimpan & ${files.length} berkas terunggah ke Drive.`
+              : `Berkas terunggah ke Drive, tetapi tautannya gagal disimpan. Data kegiatan tetap aman; unduh cadangan bila perlu.`
           );
         } catch (err) {
           console.error("Gagal mengunggah berkas:", err);
@@ -2238,18 +2397,47 @@ export default function DataKegiatan({ periode = null }) {
       tanggal: tanggalHariIni(),
     };
     const next = [...tambahan.filter((t) => t.kode !== baru.kode), baru];
+    if (!tulisKegiatanTambahan(next)) {
+      setPesanFileTambah(
+        "Data gagal disimpan — penyimpanan browser mungkin penuh. " +
+          "Unduh cadangan lewat tombol 🛡 Cadangan Data lalu coba lagi."
+      );
+      return;
+    }
     setTambahan(next);
-    tulisKegiatanTambahan(next);
+    await simpanDataTambahanKeDrive(next);
     setModalTambah(false);
     resetFormTambah();
     tampilkanToast(`✓ Data kegiatan "${baru.kode}" berhasil ditambahkan.`);
   };
 
-  const handleHapusTambahan = (kode) => {
+  const handleHapusTambahan = async (kode) => {
+    const target = (tambahan || []).find((t) => t.kode === kode);
+    const nama = target && target.nama ? ` — ${target.nama}` : "";
+    const setuju = window.confirm(
+      `Hapus data kegiatan "${kode}"${nama}?\n\n` +
+        "Cadangan otomatis akan dibuat terlebih dahulu, tetapi data yang " +
+        "sudah dihapus tidak tampil lagi di tabel. Anda bisa memulihkannya " +
+        "lewat tombol 🛡 Cadangan Data."
+    );
+    if (!setuju) return;
+
     const next = tambahan.filter((t) => t.kode !== kode);
+    const berhasil = tulisKegiatanTambahan(next, {
+      izinkanKosong: true,
+      alasan: "sebelum-hapus",
+    });
+    if (!berhasil) {
+      tampilkanToast(
+        "Data gagal dihapus karena penyimpanan browser bermasalah. Tidak ada data yang diubah."
+      );
+      return;
+    }
     setTambahan(next);
-    tulisKegiatanTambahan(next);
-    tampilkanToast(`Data kegiatan "${kode}" dihapus.`);
+    await simpanDataTambahanKeDrive(next);
+    tampilkanToast(
+      `Data kegiatan "${kode}" dihapus. Cadangan tersedia di 🛡 Cadangan Data.`
+    );
   };
 
   return (
@@ -2357,13 +2545,16 @@ export default function DataKegiatan({ periode = null }) {
             {semuaBuka ? "▴ Tutup Semua" : "▾ Buka Semua"}
           </button>
           {isAdmin && (
-            <button
-              type="button"
-              className="dk-btn dk-btn-add"
-              onClick={() => setModalTambah(true)}
-            >
-              + Tambah Data
-            </button>
+            <>
+              <CadanganData />
+              <button
+                type="button"
+                className="dk-btn dk-btn-add"
+                onClick={() => setModalTambah(true)}
+              >
+                + Tambah Data
+              </button>
+            </>
           )}
         </div>
       </div>

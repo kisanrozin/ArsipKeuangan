@@ -20,9 +20,9 @@ const MENU_ADMIN = [
   { id: "histori-dipa", label: "HISTORY REVISI DIPA" },
 ];
 
-/* ── Kredensial admin ── */
-const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "admin123";
+/* URL API login (backend PHP → MySQL/phpMyAdmin). */
+const API_LOGIN_URL =
+  (process.env.REACT_APP_API_URL || "") + "/login.php";
 
 export default function Navbar({ activePage, setActivePage, onGantiPeran }) {
   const { isAdmin } = usePeran();
@@ -85,21 +85,49 @@ export default function Navbar({ activePage, setActivePage, onGantiPeran }) {
     }
 
     setLoading(true);
-    setTimeout(() => {
-      if (
-        username.trim() === ADMIN_USERNAME &&
-        password === ADMIN_PASSWORD
-      ) {
+
+    fetch(API_LOGIN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: username.trim(), password }),
+    })
+      .then(async (res) => {
+        /* Server bisa mengirim halaman HTML (mis. error PHP) saat
+           konfigurasi salah — jangan sampai pesannya tidak terbaca. */
+        const teks = await res.text();
+        let data = null;
+        try {
+          data = JSON.parse(teks);
+        } catch (e) {
+          throw new Error(
+            "Respons server login tidak valid. Periksa konfigurasi PHP/MySQL."
+          );
+        }
+        if (!res.ok || !data.success) {
+          throw new Error(data.message || "Login gagal.");
+        }
+        if (data.user && data.user.role && data.user.role !== "admin") {
+          throw new Error("Akun ini tidak memiliki akses admin.");
+        }
+        return data;
+      })
+      .then(() => {
         setLoading(false);
+        /* Jangan biarkan kredensial tertinggal di memori/kolom input. */
+        setUsername("");
+        setPassword("");
         tutupModal();
         setTimeout(() => {
           if (typeof onGantiPeran === "function") onGantiPeran(true);
         }, 260);
-      } else {
-        setLoginError("Username atau kata sandi salah.");
+      })
+      .catch((err) => {
         setLoading(false);
-      }
-    }, 600);
+        const pesan = /failed to fetch/i.test(err.message || "")
+          ? "Tidak dapat menghubungi server login. Pastikan XAMPP/Apache menyala dan REACT_APP_API_URL di .env benar (http://localhost/api/login.php)."
+          : err.message || "Username atau kata sandi salah.";
+        setLoginError(pesan);
+      });
   };
 
   const menu = isAdmin ? MENU_ADMIN : MENU_TAMU;
@@ -207,16 +235,6 @@ export default function Navbar({ activePage, setActivePage, onGantiPeran }) {
             <div className="nlm-field">
               <div className="nlm-label-row">
                 <label htmlFor="nlm-username" className="nlm-label">Username</label>
-                <span className="nlm-inline-hint">
-                  sementara:{" "}
-                  <code
-                    className="nlm-hint-tag"
-                    onClick={() => { setUsername("admin"); setLoginError(""); }}
-                    title="Klik untuk mengisi admin"
-                  >
-                    admin
-                  </code>
-                </span>
               </div>
               <div className="nlm-input-wrap">
                 <span className="nlm-input-icon">
@@ -245,16 +263,6 @@ export default function Navbar({ activePage, setActivePage, onGantiPeran }) {
             <div className="nlm-field">
               <div className="nlm-label-row">
                 <label htmlFor="nlm-password" className="nlm-label">Kata Sandi</label>
-                <span className="nlm-inline-hint">
-                  sementara:{" "}
-                  <code
-                    className="nlm-hint-tag"
-                    onClick={() => { setPassword("admin123"); setLoginError(""); }}
-                    title="Klik untuk mengisi admin123"
-                  >
-                    admin123
-                  </code>
-                </span>
               </div>
               <div className="nlm-input-wrap">
                 <span className="nlm-input-icon">

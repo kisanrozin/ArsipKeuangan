@@ -1,0 +1,14 @@
+# Jangan tampilkan daftar isi folder API.
+Options -Indexes
+
+# Berkas SQL/konfigurasi tidak boleh diunduh lewat browser.
+# (database.sql berisi contoh akun default — jangan sampai publik.)
+<FilesMatch "\.(sql|md|ini|log|env)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
