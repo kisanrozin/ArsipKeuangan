@@ -211,9 +211,12 @@ function rentangDariPeriode(periode) {
   const tahun = String((periode && periode.tahun) || "").trim();
   const nomor = nomorBulanDariId(periode && periode.bulan);
   if (!/^\d{4}$/.test(tahun) || !nomor) return null;
+  /* Filter per-bulan saja (bukan kumulatif Januari s.d. bulan terpilih):
+     dari dan sama sama menunjuk bulan yang dipilih di beranda. */
+  const ym = `${tahun}-${String(nomor).padStart(2, "0")}`;
   return {
-    dari: `${tahun}-01`,
-    sampai: `${tahun}-${String(nomor).padStart(2, "0")}`,
+    dari: ym,
+    sampai: ym,
   };
 }
 

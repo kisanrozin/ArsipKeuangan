@@ -21,13 +21,13 @@ test("filter tahun & bulan beranda ikut ke Data Kegiatan dan Histori", async () 
     target: { value: "maret" },
   });
 
-  // Data Kegiatan memakai rentang kumulatif Januari s.d. bulan terpilih,
+  // Data Kegiatan memakai filter per-bulan (dari = sampai = bulan terpilih),
   // sama seperti angka realisasi di beranda.
   fireEvent.click(screen.getByText("DATA KEGIATAN"));
   await waitFor(() => {
     const bulanInput = container.querySelectorAll('input[type="month"]');
     expect(bulanInput.length).toBeGreaterThan(0);
-    expect(bulanInput[0].value).toBe("2025-01");
+    expect(bulanInput[0].value).toBe("2025-03");
     expect(bulanInput[1].value).toBe("2025-03");
   });
 
