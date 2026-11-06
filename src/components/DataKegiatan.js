@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { TAHUN_ANGGARAN_AKTIF } from "../data/masterData";
+import { TAHUN_ANGGARAN_AKTIF, BULAN_ANGGARAN_OPTIONS } from "../data/masterData";
 import { ambilLedgerSpm, kunciKode, nomorBulanDariId } from "../data/ledgerSpm";
 import {
   SPJ_FOLDER_ID,
@@ -82,6 +82,13 @@ const NAMA_REKENING = {
   "522191": "Belanja Jasa Lainnya",
   "524111": "Belanja Perjalanan Dinas Biasa",
 };
+
+/* id bulan → nomor 1…12, untuk membangun "YYYY-MM" dari id rekap SPM. */
+const URUTAN_BULAN = BULAN_ANGGARAN_OPTIONS.map((b) => b.id);
+const NOMOR_BULAN = URUTAN_BULAN.reduce((peta, id, i) => {
+  peta[id] = i + 1;
+  return peta;
+}, {});
 
 /* ── Format & helper ────────────────────────────────────────── */
 function formatRupiah(n) {
