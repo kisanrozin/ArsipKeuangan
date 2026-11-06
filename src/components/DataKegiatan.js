@@ -123,6 +123,14 @@ function bulanIso(iso) {
   return bulan >= 1 && bulan <= 12 ? `${cocok[1]}-${cocok[2]}` : null;
 }
 
+/* Normalisasi nomor SPM hanya menjadi digit, sehingga "6" dari nama
+   berkas "SPM 6_522112_120126_552780.pdf" cocok dengan "00006T" dari
+   ledger spreadsheet (keduanya = 6). Digunakan untuk mencocokkan bukti
+   PDF dengan ledger agar SPM yang tampil benar. */
+function normalNoSpm(no) {
+  return String(no || "").replace(/\D/g, "");
+}
+
 /* Tanggal hari ini menurut waktu lokal (WIB/WITA/WIT), bukan UTC —
    `toISOString()` bisa menyimpang satu hari pada pagi hari. */
 function tanggalHariIni() {
@@ -2003,10 +2011,10 @@ export default function DataKegiatan({ periode = null }) {
          tidak ada data ledger, tampilkan semua berkas. */
       const pdfBerkasTercocok = blok
         ? pdfBerkas.filter((b) => {
-            const no = String(b.spm.noSpm || "").trim();
+            const no = normalNoSpm(b.spm.noSpm);
             return (
               !no ||
-              blok.rows.some((r) => String(r.noSpm || "").trim() === no)
+              blok.rows.some((r) => normalNoSpm(r.noSpm) === no)
             );
           })
         : pdfBerkas;
@@ -3042,13 +3050,13 @@ export default function DataKegiatan({ periode = null }) {
                                                 String(r.rekening || "").trim() ===
                                                 rek
                                             )
-                                            .map((r) => String(r.noSpm || "").trim())
+                                            .map((r) => normalNoSpm(r.noSpm))
                                         : []
                                     );
                                     return (n.berkas || [])
                                       .filter((b) => b.spm && b.spm.tanggal)
                                       .filter((b) => {
-                                        const no = String(b.spm.noSpm || "").trim();
+                                        const no = normalNoSpm(b.spm.noSpm);
                                         return !no || spmNoLedger.has(no);
                                       })
                                       .map((b) => ({
@@ -3135,12 +3143,12 @@ export default function DataKegiatan({ periode = null }) {
                                  00524). Bila tidak ada data ledger, tampilkan
                                  semua berkas. */
                               const spmNoLedger = new Set(
-                                baris.map((r) => String(r.no || "").trim())
+                                baris.map((r) => normalNoSpm(r.no))
                               );
                               const pdfDariBerkas = (n.berkas || [])
                                 .filter((b) => b.spm && b.spm.tanggal)
                                 .filter((b) => {
-                                  const no = String(b.spm.noSpm || "").trim();
+                                  const no = normalNoSpm(b.spm.noSpm);
                                   return !no || spmNoLedger.has(no);
                                 })
                                 .map((b) => ({
