@@ -167,9 +167,13 @@ export function parseLedgerTab(rows) {
       const mTgl = uraian.match(/\((\d{1,2})-(\d{1,2})-(\d{4})\)/);
       let tanggal = null;
       if (mTgl) {
-        const d = String(mTgl[1]).padStart(2, "0");
-        const bl = String(mTgl[2]).padStart(2, "0");
-        tanggal = `${mTgl[3]}-${bl}-${d}`;
+        /* Format di spreadsheet uraian: (mm-dd-yyyy) — mis. (01-12-2026)
+           = 12 Januari 2026. Sebelumnya salah dibaca sebagai (dd-mm-yyyy),
+           sehingga tanggal Januari tertukar dengan bulan lain dan SPM
+           yang salah muncul saat filter bulan Januari. */
+        const mm = String(mTgl[1]).padStart(2, "0");
+        const dd = String(mTgl[2]).padStart(2, "0");
+        tanggal = `${mTgl[3]}-${mm}-${dd}`;
       }
       const rekening = mRek ? mRek[1] : rekeningKonteks;
       blok.rows.push({

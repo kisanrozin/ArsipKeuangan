@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { TAHUN_ANGGARAN_AKTIF, BULAN_ANGGARAN_OPTIONS } from "../data/masterData";
+import { TAHUN_ANGGARAN_AKTIF } from "../data/masterData";
 import { ambilLedgerSpm, kunciKode, nomorBulanDariId } from "../data/ledgerSpm";
 import {
   SPJ_FOLDER_ID,
@@ -82,13 +82,6 @@ const NAMA_REKENING = {
   "522191": "Belanja Jasa Lainnya",
   "524111": "Belanja Perjalanan Dinas Biasa",
 };
-
-/* id bulan → nomor 1…12, untuk membangun "YYYY-MM" dari id rekap SPM. */
-const URUTAN_BULAN = BULAN_ANGGARAN_OPTIONS.map((b) => b.id);
-const NOMOR_BULAN = URUTAN_BULAN.reduce((peta, id, i) => {
-  peta[id] = i + 1;
-  return peta;
-}, {});
 
 /* ── Format & helper ────────────────────────────────────────── */
 function formatRupiah(n) {
@@ -993,70 +986,31 @@ export default function DataKegiatan({ periode = null }) {
   const [toast, setToast] = useState(null);
 
   // Filter: draft (isian user) → applied (dipakai tabel)
-  /* Bulan-bulan yang punya tab di spreadsheet "Rekap SPM kumulatif per
-     bulan" (rekapSpm.perBulan), diformat ke "YYYY-MM" agar cocok dengan
-     nilai input type="month". Filter di Data Kegiatan disesuaikan ke
-     spreadsheet ini — bukan hanya mengikuti periode beranda — karena
-     bukti laporan SPM (PDF) per bulan bersumber dari tab tersebut. */
-  const bulanTersediaSpm = useMemo(() => {
-    if (!rekapSpm) return [];
-    const perBulan = rekapSpm.perBulan || {};
-    return Object.keys(perBulan)
-      .map((id) => {
-        const nomor = NOMOR_BULAN[id];
-        return nomor ? `${TAHUN_ANGGARAN_AKTIF}-${String(nomor).padStart(2, "0")}` : null;
-      })
-      .filter(Boolean);
-  }, [rekapSpm]);
-
-  /* Nilai awal filter: periode dari beranda dipakai bila bulannya punya
-     data di spreadsheet Rekap SPM; selainnya pakai bulan terakhir yang
-     punya data di spreadsheet. Jika spreadsheet belum ada data, ikuti
-     periode beranda. */
+  /* Filter periode yang dipilih di beranda ("Realisasi Data Per Bulan")
+     dipakai sebagai nilai awal filter bulan di halaman ini, lalu tetap
+     diperbarui bila pengguna mengganti filter tahun/bulan di beranda.
+     Filter per-bulan saja: hanya field "sampai" (bulan yang dipilih). */
   const rentangBeranda = useMemo(
     () => rentangDariPeriode(periode),
     [periode]
   );
-  const sampaiDariBeranda = rentangBeranda ? rentangBeranda.sampai : "";
-  const bulanTerakhirSpm = bulanTersediaSpm.length
-    ? bulanTersediaSpm[bulanTersediaSpm.length - 1]
-    : "";
-  const sampaiAwal =
-    sampaiDariBeranda && bulanTersediaSpm.includes(sampaiDariBeranda)
-      ? sampaiDariBeranda
-      : bulanTerakhirSpm || sampaiDariBeranda;
-
+  const sampaiBeranda = rentangBeranda ? rentangBeranda.sampai : "";
   const [draft, setDraft] = useState(() => ({
     cari: "",
-    sampai: sampaiAwal,
+    sampai: sampaiBeranda,
   }));
   const [applied, setApplied] = useState(() => ({
     cari: "",
-    sampai: sampaiAwal,
+    sampai: sampaiBeranda,
   }));
 
-  /* Saat spreadsheet Rekap SPM dimuat (rekapSpm berubah), sinkronkan
-     filter ke bulan terakhir yang punya data bila nilai saat ini belum
-     tersedia di spreadsheet — sehingga tabel dan bukti PDF selalu
-     mengacu pada bulan yang benar-benar ada di rekap. */
+  /* Periode dari beranda berubah → ganti filter bulan "sampai" tanpa
+     menghapus kata kunci pencarian. */
   useEffect(() => {
-    if (!rekapSpm) return;
-    const sudahAda = bulanTersediaSpm.includes(applied.sampai);
-    const target = sudahAda ? applied.sampai : bulanTerakhirSpm || "";
-    if (!target) return;
-    setDraft((d) => (d.sampai === target ? d : { ...d, sampai: target }));
-    setApplied((a) => (a.sampai === target ? a : { ...a, sampai: target }));
-  }, [rekapSpm, bulanTersediaSpm, bulanTerakhirSpm, applied.sampai]);
-
-  /* Periode dari beranda berubah → ganti filter bulan "sampai" bila
-     bulannya punya data di spreadsheet Rekap SPM, tanpa menghapus kata
-     kunci pencarian. */
-  useEffect(() => {
-    if (!sampaiDariBeranda) return;
-    if (!bulanTersediaSpm.includes(sampaiDariBeranda)) return;
-    setDraft((d) => (d.sampai === sampaiDariBeranda ? d : { ...d, sampai: sampaiDariBeranda }));
-    setApplied((a) => (a.sampai === sampaiDariBeranda ? a : { ...a, sampai: sampaiDariBeranda }));
-  }, [sampaiDariBeranda, bulanTersediaSpm]);
+    if (!sampaiBeranda) return;
+    setDraft((d) => (d.sampai === sampaiBeranda ? d : { ...d, sampai: sampaiBeranda }));
+    setApplied((a) => (a.sampai === sampaiBeranda ? a : { ...a, sampai: sampaiBeranda }));
+  }, [sampaiBeranda]);
 
   const [modalTambah, setModalTambah] = useState(false);
   /* Modal daftar bukti laporan SPM (tombol ringkas di kolom Bukti Kerja
