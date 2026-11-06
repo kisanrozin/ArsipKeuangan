@@ -21,14 +21,13 @@ test("filter tahun & bulan beranda ikut ke Data Kegiatan dan Histori", async () 
     target: { value: "maret" },
   });
 
-  // Data Kegiatan memakai filter per-bulan (dari = sampai = bulan terpilih),
+  // Data Kegiatan memakai satu filter bulan "sampai" saja (per-bulan),
   // sama seperti angka realisasi di beranda.
   fireEvent.click(screen.getByText("DATA KEGIATAN"));
   await waitFor(() => {
     const bulanInput = container.querySelectorAll('input[type="month"]');
-    expect(bulanInput.length).toBeGreaterThan(0);
+    expect(bulanInput.length).toBe(1);
     expect(bulanInput[0].value).toBe("2025-03");
-    expect(bulanInput[1].value).toBe("2025-03");
   });
 
   // History Revisi DIPA mengikuti tahunnya (halaman ini tanpa filter bulan).

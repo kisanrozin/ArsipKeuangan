@@ -989,40 +989,28 @@ export default function DataKegiatan({ periode = null }) {
   /* Filter periode yang dipilih di beranda ("Realisasi Data Per Bulan")
      dipakai sebagai nilai awal filter bulan di halaman ini, lalu tetap
      diperbarui bila pengguna mengganti filter tahun/bulan di beranda.
-     Rentangnya kumulatif: Januari s.d. bulan yang dipilih, sama seperti
-     angka realisasi di beranda. */
+     Filter per-bulan saja: hanya field "sampai" (bulan yang dipilih). */
   const rentangBeranda = useMemo(
     () => rentangDariPeriode(periode),
     [periode]
   );
-  const dariBeranda = rentangBeranda ? rentangBeranda.dari : "";
   const sampaiBeranda = rentangBeranda ? rentangBeranda.sampai : "";
   const [draft, setDraft] = useState(() => ({
     cari: "",
-    dari: dariBeranda,
     sampai: sampaiBeranda,
   }));
   const [applied, setApplied] = useState(() => ({
     cari: "",
-    dari: dariBeranda,
     sampai: sampaiBeranda,
   }));
 
-  /* Periode dari beranda berubah → ganti rentang bulan (Januari s.d.
-     bulan terpilih) tanpa menghapus kata kunci pencarian. */
+  /* Periode dari beranda berubah → ganti filter bulan "sampai" tanpa
+     menghapus kata kunci pencarian. */
   useEffect(() => {
-    if (!dariBeranda && !sampaiBeranda) return;
-    setDraft((d) =>
-      d.dari === dariBeranda && d.sampai === sampaiBeranda
-        ? d
-        : { ...d, dari: dariBeranda, sampai: sampaiBeranda }
-    );
-    setApplied((a) =>
-      a.dari === dariBeranda && a.sampai === sampaiBeranda
-        ? a
-        : { ...a, dari: dariBeranda, sampai: sampaiBeranda }
-    );
-  }, [dariBeranda, sampaiBeranda]);
+    if (!sampaiBeranda) return;
+    setDraft((d) => (d.sampai === sampaiBeranda ? d : { ...d, sampai: sampaiBeranda }));
+    setApplied((a) => (a.sampai === sampaiBeranda ? a : { ...a, sampai: sampaiBeranda }));
+  }, [sampaiBeranda]);
 
   const [modalTambah, setModalTambah] = useState(false);
   /* Modal daftar bukti laporan SPM (tombol ringkas di kolom Bukti Kerja
@@ -1465,10 +1453,10 @@ export default function DataKegiatan({ periode = null }) {
     const perBulan = (rekapSpm && rekapSpm.perBulan) || {};
     const dariSampai = bulanIdDariYm(applied.sampai);
     if (dariSampai) return perBulan[dariSampai] ? dariSampai : null;
-    const dariDari = bulanIdDariYm(applied.dari);
+    const dariDari = bulanIdDariYm(applied.sampai);
     if (dariDari) return perBulan[dariDari] ? dariDari : null;
     return bulanTerakhirDenganData(rekapSpm);
-  }, [rekapSpm, applied.dari, applied.sampai]);
+  }, [rekapSpm, applied.sampai, applied.sampai]);
 
   const rekapSpmBulan = useMemo(
     () => rekapRealisasiSpm(rekapSpm, TAHUN_ANGGARAN_AKTIF, bulanRekapSpm),
@@ -1544,7 +1532,7 @@ export default function DataKegiatan({ periode = null }) {
   const ledgerTerpilihIndex = useMemo(() => {
     const peta = new Map();
     if (!ledgerSpm) return peta;
-    const dari = applied.dari;
+    const dari = applied.sampai;
     const sampai = applied.sampai;
     ledgerSpm.per.forEach((blok, kode) => {
       const rows =
@@ -1566,7 +1554,7 @@ export default function DataKegiatan({ periode = null }) {
       if (!peta.has(k)) peta.set(k, isi);
     });
     return peta;
-  }, [ledgerSpm, applied.dari, applied.sampai]);
+  }, [ledgerSpm, applied.sampai, applied.sampai]);
 
   const ledgerTerpilihPilih = useCallback(
     (kode) => {
@@ -1612,12 +1600,12 @@ export default function DataKegiatan({ periode = null }) {
     if (!ledgerSpm) return peta;
     ledgerSpm.per.forEach((blok, kode) => {
       const rows =
-        applied.dari || applied.sampai
+        applied.sampai || applied.sampai
           ? blok.rows.filter((r) => {
               const ym = r.tanggal ? String(r.tanggal).slice(0, 7) : null;
               if (!ym) return false;
               return (
-                (!applied.dari || ym >= applied.dari) &&
+                (!applied.sampai || ym >= applied.sampai) &&
                 (!applied.sampai || ym <= applied.sampai)
               );
             })
@@ -1639,8 +1627,8 @@ export default function DataKegiatan({ periode = null }) {
       });
     });
     return peta;
-  }, [ledgerSpm, applied.dari, applied.sampai]);
-  const filterBulanAktif = Boolean(applied.dari || applied.sampai);
+  }, [ledgerSpm, applied.sampai, applied.sampai]);
+  const filterBulanAktif = Boolean(applied.sampai || applied.sampai);
   /* ── Terapkan filter ────────────────────────────────────── */
   const tabelRows = useMemo(() => {
     const q = applied.cari.trim();
@@ -1683,11 +1671,11 @@ export default function DataKegiatan({ periode = null }) {
          laporan SPM per kode kegiatan tidak hilang dari tabel.
          Baris tanpa berkas (mis. input manual) tetap dibandingkan
          lewat tanggal barisnya. */
-      if (!applied.dari && !applied.sampai) return true;
+      if (!applied.sampai && !applied.sampai) return true;
 
       const dalamRentang = (ym) =>
         !!ym &&
-        (!applied.dari || ym >= applied.dari) &&
+        (!applied.sampai || ym >= applied.sampai) &&
         (!applied.sampai || ym <= applied.sampai);
 
       const bulanBerkas = (r.berkas || [])
@@ -1724,7 +1712,7 @@ export default function DataKegiatan({ periode = null }) {
          seluruh tahun. */
       if (r.realisasiPerBulan && Object.keys(r.realisasiPerBulan).length) {
         return Object.entries(r.realisasiPerBulan).reduce((total, [ym, n]) => {
-          if (applied.dari && ym < applied.dari) return total;
+          if (applied.sampai && ym < applied.sampai) return total;
           if (applied.sampai && ym > applied.sampai) return total;
           return total + (Number(n) || 0);
         }, 0);
@@ -1732,7 +1720,7 @@ export default function DataKegiatan({ periode = null }) {
       const v = realisasiLedger.get(kunciKode(r.kode));
       return typeof v === "number" ? v : r.realisasi || 0;
     },
-    [realisasiLedger, applied.dari, applied.sampai]
+    [realisasiLedger, applied.sampai, applied.sampai]
   );
 
   /* ── Pohon hierarkis (kode induk → cabang → detail → akun) ── */
@@ -1876,13 +1864,13 @@ export default function DataKegiatan({ periode = null }) {
     [tabelRows, totalRealisasi, totalBerkas]
   );
 
-  /* Pilih satu bulan dari chips: bila bulan itu sedang menjadi batas
-     "dari" DAN "sampai" (bulan tunggal), klik berikutnya melepasnya. */
+  /* Pilih satu bulan dari chips: bila bulan itu sama dengan filter
+     "sampai" yang aktif (bulan tunggal), klik berikutnya melepasnya. */
   const pilihBulan = useCallback((bulan) => {
-    const sudahSama = applied.dari === bulan && applied.sampai === bulan;
+    const sudahSama = applied.sampai === bulan;
     const baru = sudahSama
-      ? { ...applied, dari: "", sampai: "" }
-      : { ...applied, dari: bulan, sampai: bulan };
+      ? { ...applied, sampai: "" }
+      : { ...applied, sampai: bulan };
     setDraft(baru);
     setApplied(baru);
   }, [applied]);
@@ -1892,7 +1880,7 @@ export default function DataKegiatan({ periode = null }) {
   /* Label periode filter (rentang dari–sampai) — dipakai untuk judul
      kolom Bukti Kerja, tombol, dan modal bukti laporan SPM. */
   const periodeFilterLabel = filterBulanAktif
-    ? labelPeriodeBulan(applied.dari, applied.sampai)
+    ? labelPeriodeBulan(applied.sampai, applied.sampai)
     : "";
 
   /* Daftar bukti kerja SPM (PDF dari Drive) yang tanggal SPM-nya masuk
@@ -1918,7 +1906,7 @@ export default function DataKegiatan({ periode = null }) {
      ringkasan di atas tabel. */
   const ledgerBarisPeriode = useMemo(() => {
     if (!ledgerSpm) return [];
-    const dari = applied.dari;
+    const dari = applied.sampai;
     const sampai = applied.sampai;
     const keluar = [];
     ledgerSpm.per.forEach((blok, kode) => {
@@ -1932,7 +1920,7 @@ export default function DataKegiatan({ periode = null }) {
       });
     });
     return keluar;
-  }, [ledgerSpm, applied.dari, applied.sampai]);
+  }, [ledgerSpm, applied.sampai, applied.sampai]);
 
   const ledgerPeriodeTotal = useMemo(
     () => ledgerBarisPeriode.reduce((s, r) => s + (r.nilai || 0), 0),
@@ -1949,7 +1937,7 @@ export default function DataKegiatan({ periode = null }) {
      bila tidak → seluruh berkas SPM kegiatan tersebut. */
   const berkasPerKegiatan = useMemo(() => {
     const peta = new Map();
-    const dari = applied.dari;
+    const dari = applied.sampai;
     const sampai = applied.sampai;
     const dalamRentang = (ym) =>
       !!ym &&
@@ -1964,7 +1952,7 @@ export default function DataKegiatan({ periode = null }) {
       if (daftar.length) peta.set(r.kode, daftar);
     });
     return peta;
-  }, [semuaRows, applied.dari, applied.sampai]);
+  }, [semuaRows, applied.sampai, applied.sampai]);
 
 
 
@@ -2081,13 +2069,13 @@ export default function DataKegiatan({ periode = null }) {
   }, [tabelRows, ledgerTerpilihPilih, berkasPerKegiatan, applied.cari]);
 
   const adaFilter =
-    Boolean(applied.cari || applied.dari || applied.sampai) ||
-    Boolean(draft.cari || draft.dari || draft.sampai);
+    Boolean(applied.cari || applied.sampai || applied.sampai) ||
+    Boolean(draft.cari || draft.sampai || draft.sampai);
 
   /* Mode tabel datar aktif bila filter benar-benar dipakai (applied) —
      saat filter dikosongkan, tampilan kembali ke mode pohon. */
   const filterTabelDatar = Boolean(
-    applied.cari.trim() || applied.dari || applied.sampai
+    applied.cari.trim() || applied.sampai || applied.sampai
   );
 
   /* Reset form + hasil impor saat modal ditutup. */
@@ -2499,15 +2487,6 @@ export default function DataKegiatan({ periode = null }) {
             <input
               type="month"
               className="dk-input dk-input-date"
-              value={draft.dari}
-              onChange={(e) => setDraft({ ...draft, dari: e.target.value })}
-            />
-          </label>
-          <label className="dk-date-wrap">
-            <span className="dk-date-label">s.d.</span>
-            <input
-              type="month"
-              className="dk-input dk-input-date"
               value={draft.sampai}
               onChange={(e) => setDraft({ ...draft, sampai: e.target.value })}
             />
@@ -2524,7 +2503,7 @@ export default function DataKegiatan({ periode = null }) {
             type="button"
             className="dk-btn dk-btn-clear"
             onClick={() => {
-              const kosong = { cari: "", dari: "", sampai: "" };
+              const kosong = { cari: "", sampai: "" };
               setDraft(kosong);
               setApplied(kosong);
             }}
@@ -2576,7 +2555,7 @@ export default function DataKegiatan({ periode = null }) {
               </span>
             ) : (
               bulanTersedia.map((b) => {
-                const aktif = applied.dari === b.bulan && applied.sampai === b.bulan;
+                const aktif = applied.sampai === b.bulan && applied.sampai === b.bulan;
                 return (
                   <button
                     key={b.bulan}
@@ -2600,9 +2579,9 @@ export default function DataKegiatan({ periode = null }) {
                 <span>
                   Terhubung ke{" "}
                   <strong>
-                    {applied.dari && applied.sampai && applied.dari !== applied.sampai
-                      ? `${labelBulan(applied.dari)} – ${labelBulan(applied.sampai)}`
-                      : labelBulan(applied.dari || applied.sampai)}
+                    {applied.sampai && applied.sampai && applied.sampai !== applied.sampai
+                      ? `${labelBulan(applied.sampai)} – ${labelBulan(applied.sampai)}`
+                      : labelBulan(applied.sampai || applied.sampai)}
                   </strong>
                   :
                 </span>
@@ -2655,7 +2634,7 @@ export default function DataKegiatan({ periode = null }) {
                   </>
                 ) : (
                   <span className="dk-kosong">
-                    Bulan {labelBulan(applied.sampai || applied.dari)} belum
+                    Bulan {labelBulan(applied.sampai || applied.sampai)} belum
                     punya data di spreadsheet rekap SPM — dianggap kosong.
                   </span>
                 )}
