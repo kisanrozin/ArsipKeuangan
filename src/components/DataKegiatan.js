@@ -1998,11 +1998,24 @@ export default function DataKegiatan({ periode = null }) {
          tombol "Bukti PDF" tetap muncul walau hanya ada berkas
          non-standar. */
       const pdfBerkas = berkasPerKegiatan.get(kode) || [];
+      /* Filter bukti PDF agar hanya tampilkan berkas whose no SPM cocok
+         dengan no SPM di ledger spreadsheet untuk kegiatan ini. Bila
+         tidak ada data ledger, tampilkan semua berkas. */
+      const pdfBerkasTercocok = blok
+        ? pdfBerkas.filter((b) => {
+            const no = String(b.spm.noSpm || "").trim();
+            return (
+              !no ||
+              blok.rows.some((r) => String(r.noSpm || "").trim() === no)
+            );
+          })
+        : pdfBerkas;
       const pdfTanpaTanggal = (r.berkas || []).filter(
         (b) => b.spm && !b.spm.tanggal
       );
       const pdfLainnya = r.lainnya || [];
-      const jumlahPdf = pdfBerkas.length + pdfTanpaTanggal.length + pdfLainnya.length;
+      const jumlahPdf =
+        pdfBerkasTercocok.length + pdfTanpaTanggal.length + pdfLainnya.length;
 
       if (!grup.size) {
         /* Kegiatan tanpa SPM sama sekali → tetap ditampilkan, supaya
@@ -2016,7 +2029,7 @@ export default function DataKegiatan({ periode = null }) {
           realisasi: r.realisasi || 0,
           tanggal: r.tanggal,
           spm: [],
-          pdf: pdfBerkas.map((b) => ({
+          pdf: pdfBerkasTercocok.map((b) => ({
             no: b.spm.noSpm,
             rek: b.spm.rekening,
             nilai: b.spm.nilai,
@@ -2051,7 +2064,7 @@ export default function DataKegiatan({ periode = null }) {
           tanggal: g.tanggal || r.tanggal,
           spm: g.spm,
           /* Bukti PDF di Drive untuk kode kegiatan ini (dengan tautan). */
-          pdf: pdfBerkas.map((b) => ({
+          pdf: pdfBerkasTercocok.map((b) => ({
             no: b.spm.noSpm,
             rek: b.spm.rekening,
             nilai: b.spm.nilai,
@@ -3016,16 +3029,37 @@ export default function DataKegiatan({ periode = null }) {
                                   baris: daftar,
                                   total,
                                   liveKey,
-                                  pdf: (n.berkas || [])
-                                    .filter((b) => b.spm && b.spm.tanggal)
-                                    .map((b) => ({
-                                      no: b.spm.noSpm,
-                                      rek: b.spm.rekening,
-                                      nilai: b.spm.nilai,
-                                      tgl: b.spm.tanggal,
-                                      nama: b.name,
-                                      link: b.webViewLink,
-                                    })),
+                                  pdf: (() => {
+                                    /* Hanya tampilkan berkas PDF whose no SPM
+                                       cocok dengan no SPM di ledger spreadsheet
+                                       (untuk akun belanja ini). Bila tidak ada
+                                       data ledger, tampilkan semua berkas. */
+                                    const spmNoLedger = new Set(
+                                      blok
+                                        ? blok.rows
+                                            .filter(
+                                              (r) =>
+                                                String(r.rekening || "").trim() ===
+                                                rek
+                                            )
+                                            .map((r) => String(r.noSpm || "").trim())
+                                        : []
+                                    );
+                                    return (n.berkas || [])
+                                      .filter((b) => b.spm && b.spm.tanggal)
+                                      .filter((b) => {
+                                        const no = String(b.spm.noSpm || "").trim();
+                                        return !no || spmNoLedger.has(no);
+                                      })
+                                      .map((b) => ({
+                                        no: b.spm.noSpm,
+                                        rek: b.spm.rekening,
+                                        nilai: b.spm.nilai,
+                                        tgl: b.spm.tanggal,
+                                        nama: b.name,
+                                        link: b.webViewLink,
+                                      }));
+                                  })(),
                                   pdfTanpaTanggal: tanpa,
                                   pdfLainnya: lain,
                                   rekening: n.link
@@ -3095,6 +3129,28 @@ export default function DataKegiatan({ periode = null }) {
                             }`}
                             onClick={() => {
                               const liveKey = `kegiatan:${n.kode}`;
+                              /* Hanya tampilkan berkas PDF whose no SPM cocok
+                                 dengan no SPM di ledger spreadsheet, supaya
+                                 bukti yang tampil sesuai (mis. 00006T bukan
+                                 00524). Bila tidak ada data ledger, tampilkan
+                                 semua berkas. */
+                              const spmNoLedger = new Set(
+                                baris.map((r) => String(r.no || "").trim())
+                              );
+                              const pdfDariBerkas = (n.berkas || [])
+                                .filter((b) => b.spm && b.spm.tanggal)
+                                .filter((b) => {
+                                  const no = String(b.spm.noSpm || "").trim();
+                                  return !no || spmNoLedger.has(no);
+                                })
+                                .map((b) => ({
+                                  no: b.spm.noSpm,
+                                  rek: b.spm.rekening,
+                                  nilai: b.spm.nilai,
+                                  tgl: b.spm.tanggal,
+                                  nama: b.name,
+                                  link: b.webViewLink,
+                                }));
                               setModalSpm({
                                 label: periodeFilterLabel,
                                 kode: n.kode,
@@ -3103,17 +3159,7 @@ export default function DataKegiatan({ periode = null }) {
                                 baris,
                                 total,
                                 liveKey,
-                                /* Bukti PDF di Drive (tautan ke berkas). */
-                                pdf: (n.berkas || [])
-                                  .filter((b) => b.spm && b.spm.tanggal)
-                                  .map((b) => ({
-                                    no: b.spm.noSpm,
-                                    rek: b.spm.rekening,
-                                    nilai: b.spm.nilai,
-                                    tgl: b.spm.tanggal,
-                                    nama: b.name,
-                                    link: b.webViewLink,
-                                  })),
+                                pdf: pdfDariBerkas,
                                 pdfTanpaTanggal: (n.berkas || []).filter(
                                   (b) => b.spm && !b.spm.tanggal
                                 ),

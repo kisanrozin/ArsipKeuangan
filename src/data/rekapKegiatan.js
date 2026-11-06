@@ -68,7 +68,7 @@ const NOMOR_BULAN = URUTAN_BULAN.reduce((peta, id, i) => {
    Salinan ("Copy of SPM …") ikut dikenali agar tidak terhitung
    dobel.                                                    */
 export const RE_SPM =
-  /^(?:copy\s+of\s+)?SPM\s*(\d+)[_\-\s]+(\d{6})[_\-\s]+(\d{6})[_\-\s]+(\d+)/i;
+  /^(?:copy\s+of\s+)?SPM\s*([A-Za-z0-9]+)[_\-\s]+(\d{6})[_\-\s]+(\d{6})[_\-\s]+(\d+)/i;
 
 /* "ddmmyy" → "2026-07-28" (ISO).
    Hanya menghasilkan tanggal KALENDER yang benar-benar ada — nama
