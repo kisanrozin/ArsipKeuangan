@@ -128,7 +128,10 @@ function bulanIso(iso) {
    ledger spreadsheet (keduanya = 6). Digunakan untuk mencocokkan bukti
    PDF dengan ledger agar SPM yang tampil benar. */
 function normalNoSpm(no) {
-  return String(no || "").replace(/\D/g, "");
+  const digit = String(no || "").replace(/\D/g, "");
+  /* Konversi ke Number hilangkan nol di depan: "00006" → "6", sehingga
+     "6" dari nama berkas cocok dengan "00006T" dari ledger spreadsheet. */
+  return digit ? String(Number(digit)) : "";
 }
 
 /* Tanggal hari ini menurut waktu lokal (WIB/WITA/WIT), bukan UTC —
